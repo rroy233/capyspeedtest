@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "ci:local": "python scripts/run_ci_checks.py",
     "tauri": "tauri"
   },
   "dependencies": {
