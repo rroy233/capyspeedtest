@@ -23,6 +23,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RELEASE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     strategy:
       matrix:
         include:
@@ -118,6 +120,12 @@ jobs:
           if ($null -ne $msi) {
             $dest = "CapySpeedtest-$VERSION-Windows.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
+            $sigPath = "$($msi.FullName).sig"
+            if (Test-Path $sigPath) {
+              Copy-Item $sigPath (Join-Path release-assets "$dest.sig")
+            } else {
+              Write-Warning "Missing updater signature for $($msi.FullName)"
+            }
             Write-Host "Installer copied: $dest"
           } else {
             Write-Warning 'No Windows MSI installer found'
@@ -133,7 +141,13 @@ jobs:
           ARCH="${{ matrix.linux_arch || 'x86_64' }}"
           APPIMAGE=$(find src-tauri/target/release/bundle -name "*.AppImage" | head -1 || true)
           if [ -n "$APPIMAGE" ]; then
-            cp "$APPIMAGE" "release-assets/CapySpeedtest-${VERSION}-Linux-${ARCH}.AppImage"
+            DEST="CapySpeedtest-${VERSION}-Linux-${ARCH}.AppImage"
+            cp "$APPIMAGE" "release-assets/${DEST}"
+            if [ -f "${APPIMAGE}.sig" ]; then
+              cp "${APPIMAGE}.sig" "release-assets/${DEST}.sig"
+            else
+              echo "Missing updater signature for ${APPIMAGE}"
+            fi
             echo "AppImage copied"
           fi
           DEB=$(find src-tauri/target/release/bundle -name "*.deb" | head -1 || true)
@@ -150,22 +164,32 @@ jobs:
           mkdir -p release-assets
           VERSION="$RELEASE_VERSION"
 
-          ARM_APP=$(find "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -maxdepth 1 -name "*.app" -type d | head -1 || true)
-          if [ -n "$ARM_APP" ]; then
-            ARM_ZIP="CapySpeedtest-${VERSION}-macOS-AppleSilicon.zip"
-            ditto -c -k --sequesterRsrc --keepParent "$ARM_APP" "release-assets/$ARM_ZIP"
-            echo "macOS Apple Silicon zip ready: $ARM_ZIP"
+          ARM_UPDATER=$(find "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" -maxdepth 1 -name "*.app.tar.gz" -type f | head -1 || true)
+          if [ -n "$ARM_UPDATER" ]; then
+            ARM_DEST="CapySpeedtest-${VERSION}-darwin-aarch64.app.tar.gz"
+            cp "$ARM_UPDATER" "release-assets/$ARM_DEST"
+            if [ -f "${ARM_UPDATER}.sig" ]; then
+              cp "${ARM_UPDATER}.sig" "release-assets/$ARM_DEST.sig"
+            else
+              echo "Missing updater signature for $ARM_UPDATER"
+            fi
+            echo "macOS Apple Silicon updater artifact ready: $ARM_DEST"
           else
-            echo "No Apple Silicon .app found"
+            echo "No Apple Silicon updater artifact found"
           fi
 
-          INTEL_APP=$(find "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" -maxdepth 1 -name "*.app" -type d | head -1 || true)
-          if [ -n "$INTEL_APP" ]; then
-            INTEL_ZIP="CapySpeedtest-${VERSION}-macOS-Intel.zip"
-            ditto -c -k --sequesterRsrc --keepParent "$INTEL_APP" "release-assets/$INTEL_ZIP"
-            echo "macOS Intel zip ready: $INTEL_ZIP"
+          INTEL_UPDATER=$(find "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" -maxdepth 1 -name "*.app.tar.gz" -type f | head -1 || true)
+          if [ -n "$INTEL_UPDATER" ]; then
+            INTEL_DEST="CapySpeedtest-${VERSION}-darwin-x86_64.app.tar.gz"
+            cp "$INTEL_UPDATER" "release-assets/$INTEL_DEST"
+            if [ -f "${INTEL_UPDATER}.sig" ]; then
+              cp "${INTEL_UPDATER}.sig" "release-assets/$INTEL_DEST.sig"
+            else
+              echo "Missing updater signature for $INTEL_UPDATER"
+            fi
+            echo "macOS Intel updater artifact ready: $INTEL_DEST"
           else
-            echo "No Intel .app found"
+            echo "No Intel updater artifact found"
           fi
 
       - name: List prepared assets
@@ -288,8 +312,8 @@ jobs:
             echo
             echo "## 下载"
             echo
-            echo "- macOS (Apple Silicon): \`CapySpeedtest-${TAG}-macOS-AppleSilicon.zip\`"
-            echo "- macOS (Intel): \`CapySpeedtest-${TAG}-macOS-Intel.zip\`"
+            echo "- macOS (Apple Silicon): \`CapySpeedtest-${TAG}-darwin-aarch64.app.tar.gz\`"
+            echo "- macOS (Intel): \`CapySpeedtest-${TAG}-darwin-x86_64.app.tar.gz\`"
             echo "- Windows: \`CapySpeedtest-${TAG}-Windows.msi\`"
             echo "- Linux x86_64: \`CapySpeedtest-${TAG}-Linux-x86_64.AppImage\` / \`CapySpeedtest-${TAG}-Linux-x86_64.deb\`"
             echo "- Linux arm64: \`CapySpeedtest-${TAG}-Linux-arm64.AppImage\` / \`CapySpeedtest-${TAG}-Linux-arm64.deb\`"
@@ -318,6 +342,75 @@ jobs:
 
           echo "Generated release-notes.md:"
           cat release-notes.md
+
+      - name: Generate updater manifest latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$RELEASE_VERSION"
+          REPO="${GITHUB_REPOSITORY}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
+          pick_single() {
+            local pattern="$1"
+            ls release-assets/$pattern 2>/dev/null | head -n1 || true
+          }
+
+          add_platform() {
+            local platform_key="$1"
+            local file_path="$2"
+            if [ -z "$file_path" ]; then
+              return
+            fi
+            local file_name
+            file_name="$(basename "$file_path")"
+            local sig_file="${file_path}.sig"
+            if [ ! -f "$sig_file" ]; then
+              echo "Missing signature file for ${file_name}" >&2
+              exit 1
+            fi
+            local signature
+            signature="$(tr -d '\n\r' < "$sig_file")"
+            if [ -z "$signature" ]; then
+              echo "Empty signature for ${file_name}" >&2
+              exit 1
+            fi
+            cat >> latest-platforms.json <<EOF
+            "${platform_key}": {
+              "url": "${BASE_URL}/${file_name}",
+              "signature": "${signature}"
+            },
+          EOF
+          }
+
+          rm -f latest-platforms.json
+          touch latest-platforms.json
+          add_platform "windows-x86_64" "$(pick_single "CapySpeedtest-${TAG}-Windows.msi")"
+          add_platform "linux-x86_64" "$(pick_single "CapySpeedtest-${TAG}-Linux-x86_64.AppImage")"
+          add_platform "linux-aarch64" "$(pick_single "CapySpeedtest-${TAG}-Linux-arm64.AppImage")"
+          add_platform "darwin-aarch64" "$(pick_single "CapySpeedtest-${TAG}-darwin-aarch64.app.tar.gz")"
+          add_platform "darwin-x86_64" "$(pick_single "CapySpeedtest-${TAG}-darwin-x86_64.app.tar.gz")"
+
+          if [ ! -s latest-platforms.json ]; then
+            echo "No updater platforms were discovered." >&2
+            exit 1
+          fi
+
+          sed -i '$ s/,$//' latest-platforms.json
+
+          cat > release-assets/latest.json <<EOF
+          {
+            "version": "${TAG}",
+            "notes": "See GitHub release notes.",
+            "pub_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "platforms": {
+          $(cat latest-platforms.json)
+            }
+          }
+          EOF
+
+          echo "Generated release-assets/latest.json"
+          cat release-assets/latest.json
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v2

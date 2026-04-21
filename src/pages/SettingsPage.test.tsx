@@ -97,7 +97,7 @@ vi.mock("../api/subscription", () => ({
 }));
 
 describe("SettingsPage", () => {
-  it("应展示设置快照并支持更新下载", async () => {
+  it("应展示设置快照并支持更新安装", async () => {
     render(
       <AlertProvider>
         <SettingsPage />
@@ -108,10 +108,10 @@ describe("SettingsPage", () => {
       expect(screen.getAllByText("v1.19.1").length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "下载更新包" }));
+    fireEvent.click(screen.getByRole("button", { name: "一键安装并重启" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/mock\/updates\/client-0.2.0.pkg/)).toBeInTheDocument();
+      expect(screen.getByText(/应用即将自动重启并应用新版本/)).toBeInTheDocument();
     });
   });
 });

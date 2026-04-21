@@ -82,7 +82,7 @@ export function ClientUpdateCard({
           isDisabled={!snapshotReady || !snapshot.has_update || loadingUpdate}
           isPending={isDownloadingUpdate}
         >
-          下载更新包
+          一键安装并重启
         </Button>
       </div>
     </Surface>

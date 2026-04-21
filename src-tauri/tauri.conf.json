@@ -24,6 +24,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "macOS": {
       "minimumSystemVersion": "12.0"
@@ -35,5 +36,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQyRDJFNzVCNDFDMjAyQzYKUldUR0FzSkJXK2ZTUWdvb05OYnpIYnQrVXBSTVl0aklMQ3gxZW9TMlgxMVNWdVhvTkRHaWdlU2UK",
+      "endpoints": [
+        "https://github.com/rroy233/capyspeedtest/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

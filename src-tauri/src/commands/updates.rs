@@ -7,15 +7,18 @@ use crate::models::{
 };
 use crate::services;
 use tauri::Emitter;
+use tauri_plugin_updater::UpdaterExt;
 use tracing::{info, warn};
 
 /// 检查客户端是否存在更新（异步）。
 #[tauri::command]
 pub async fn check_client_update(
+    app: tauri::AppHandle,
     window: tauri::Window,
     state: tauri::State<'_, AppState>,
-    current_version: String,
+    _current_version: String,
 ) -> Result<ClientUpdateStatus, String> {
+    let current_version = runtime_app_version(&app);
     info!("[命令] check_client_update current={}", current_version);
 
     let _ = window.emit(
@@ -27,18 +30,51 @@ pub async fn check_client_update(
         },
     );
 
-    let result = match services::try_check_client_update(&current_version).await {
-        Ok(status) => status,
+    let update = match app.updater_builder().build() {
+        Ok(updater) => match updater.check().await {
+            Ok(result) => result,
+            Err(error) => {
+                let message = format!("检查失败: {}", error);
+                let _ = window.emit(
+                    "updater://check/progress",
+                    &UpdateCheckProgressEvent {
+                        stage: "error".to_string(),
+                        progress: 0.0,
+                        message: message.clone(),
+                    },
+                );
+                return Err(message);
+            }
+        },
         Err(error) => {
+            let message = format!("初始化更新器失败: {}", error);
             let _ = window.emit(
                 "updater://check/progress",
                 &UpdateCheckProgressEvent {
                     stage: "error".to_string(),
                     progress: 0.0,
-                    message: format!("检查失败: {}", error),
+                    message: message.clone(),
                 },
             );
-            return Err(error);
+            return Err(message);
+        }
+    };
+
+    let result = if let Some(update) = update {
+        ClientUpdateStatus {
+            current_version: current_version.clone(),
+            latest_version: update.version.clone(),
+            has_update: true,
+            download_url: String::new(),
+            release_notes: update.body.unwrap_or_default(),
+        }
+    } else {
+        ClientUpdateStatus {
+            current_version: current_version.clone(),
+            latest_version: current_version.clone(),
+            has_update: false,
+            download_url: String::new(),
+            release_notes: String::new(),
         }
     };
     let checked_at = services::current_timestamp();
@@ -192,8 +228,30 @@ pub async fn run_scheduled_update_checks(
 
     let current_version = current_client_version.unwrap_or_else(|| runtime_app_version(&app));
 
-    match services::try_check_client_update(&current_version).await {
-        Ok(status) => {
+    let update_result = match app.updater_builder().build() {
+        Ok(updater) => updater.check().await.map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
+
+    match update_result {
+        Ok(update) => {
+            let status = if let Some(update) = update {
+                ClientUpdateStatus {
+                    current_version: current_version.clone(),
+                    latest_version: update.version.clone(),
+                    has_update: true,
+                    download_url: String::new(),
+                    release_notes: update.body.unwrap_or_default(),
+                }
+            } else {
+                ClientUpdateStatus {
+                    current_version: current_version.clone(),
+                    latest_version: current_version.clone(),
+                    has_update: false,
+                    download_url: String::new(),
+                    release_notes: String::new(),
+                }
+            };
             let checked_at = now.to_string();
             {
                 let mut checked_guard = state.client_update_last_checked_at.lock().unwrap();
@@ -250,61 +308,149 @@ pub async fn run_scheduled_update_checks(
 /// 下载并校验客户端更新包，失败时保留回滚备份（异步）。
 #[tauri::command]
 pub async fn download_client_update(
+    app: tauri::AppHandle,
     window: tauri::Window,
-    version: String,
-    download_url: String,
-    expected_sha256: Option<String>,
+    version: Option<String>,
 ) -> Result<ClientUpdateDownloadResult, String> {
-    info!(
-        "[命令] download_client_update version={}, url={}",
-        version, download_url
-    );
+    let label_version = version.unwrap_or_else(|| "latest".to_string());
+    info!("[命令] download_client_update version={}", label_version);
 
     let _ = window.emit(
         "updater://download/progress",
         &UpdateDownloadProgressEvent {
-            version: version.clone(),
+            version: label_version.clone(),
             stage: "downloading".to_string(),
-            progress: 10.0,
+            progress: 0.0,
             message: "正在下载更新包...".to_string(),
         },
     );
 
-    let result = services::download_client_update_package(
-        &version,
-        &download_url,
-        expected_sha256.as_deref(),
-    )
-    .await;
-
-    match &result {
-        Ok(r) => {
+    let update = match app.updater_builder().build() {
+        Ok(updater) => match updater.check().await {
+            Ok(Some(update)) => update,
+            Ok(None) => {
+                let message = "当前没有可安装更新".to_string();
+                let _ = window.emit(
+                    "updater://download/progress",
+                    &UpdateDownloadProgressEvent {
+                        version: label_version.clone(),
+                        stage: "error".to_string(),
+                        progress: 0.0,
+                        message: message.clone(),
+                    },
+                );
+                return Err(message);
+            }
+            Err(error) => {
+                let message = format!("检查更新失败: {}", error);
+                let _ = window.emit(
+                    "updater://download/progress",
+                    &UpdateDownloadProgressEvent {
+                        version: label_version.clone(),
+                        stage: "error".to_string(),
+                        progress: 0.0,
+                        message: message.clone(),
+                    },
+                );
+                return Err(message);
+            }
+        },
+        Err(error) => {
+            let message = format!("初始化更新器失败: {}", error);
             let _ = window.emit(
                 "updater://download/progress",
                 &UpdateDownloadProgressEvent {
-                    version: version.clone(),
-                    stage: "verifying".to_string(),
-                    progress: 90.0,
-                    message: "正在验证更新包...".to_string(),
-                },
-            );
-            info!(
-                "[命令] download_client_update 成功, path={}",
-                r.package_path
-            );
-        }
-        Err(e) => {
-            let _ = window.emit(
-                "updater://download/progress",
-                &UpdateDownloadProgressEvent {
-                    version: version.clone(),
+                    version: label_version.clone(),
                     stage: "error".to_string(),
                     progress: 0.0,
-                    message: format!("下载失败: {}", e),
+                    message: message.clone(),
+                },
+            );
+            return Err(message);
+        }
+    };
+
+    let mut downloaded_bytes: u64 = 0;
+    let target_version = update.version.clone();
+
+    let install_result = update
+        .download_and_install(
+            |chunk_length, content_length| {
+                downloaded_bytes += chunk_length as u64;
+                let progress = content_length
+                    .map(|total| {
+                        if total == 0 {
+                            0.0
+                        } else {
+                            ((downloaded_bytes as f64 / total as f64) * 100.0).clamp(0.0, 100.0)
+                                as f32
+                        }
+                    })
+                    .unwrap_or(0.0);
+
+                let message = content_length
+                    .map(|total| format!("已下载 {downloaded_bytes}/{total} 字节"))
+                    .unwrap_or_else(|| format!("已下载 {downloaded_bytes} 字节"));
+
+                let _ = window.emit(
+                    "updater://download/progress",
+                    &UpdateDownloadProgressEvent {
+                        version: target_version.clone(),
+                        stage: "downloading".to_string(),
+                        progress,
+                        message,
+                    },
+                );
+            },
+            || {
+                let _ = window.emit(
+                    "updater://download/progress",
+                    &UpdateDownloadProgressEvent {
+                        version: target_version.clone(),
+                        stage: "verifying".to_string(),
+                        progress: 100.0,
+                        message: "下载完成，正在安装更新...".to_string(),
+                    },
+                );
+            },
+        )
+        .await;
+
+    match install_result {
+        Ok(()) => {
+            let _ = window.emit(
+                "updater://download/progress",
+                &UpdateDownloadProgressEvent {
+                    version: target_version.clone(),
+                    stage: "completed".to_string(),
+                    progress: 100.0,
+                    message: "更新安装完成，正在重启应用...".to_string(),
+                },
+            );
+
+            #[cfg(not(target_os = "windows"))]
+            app.restart();
+
+            Ok(ClientUpdateDownloadResult {
+                version: target_version,
+                package_path: "managed-by-tauri-updater".to_string(),
+                backup_path: None,
+                rolled_back: false,
+            })
+        }
+        Err(e) => {
+            let message = format!("安装更新失败: {}", e);
+            let _ = window.emit(
+                "updater://download/progress",
+                &UpdateDownloadProgressEvent {
+                    version: target_version,
+                    stage: "error".to_string(),
+                    progress: 0.0,
+                    message: message.clone(),
                 },
             );
             tracing::error!("[命令] download_client_update 失败: {}", e);
+            Err(message)
         }
     }
-    result
 }

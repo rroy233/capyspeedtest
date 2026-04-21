@@ -430,7 +430,7 @@ export default function SettingsPage() {
       if (status.has_update) {
         showAlert({
           title: `发现新版本 ${status.latest_version}`,
-          description: "可以直接在当前页面下载更新包",
+          description: "可以直接在当前页面一键安装并重启",
           status: "warning",
           timeout: 4200,
         });
@@ -473,13 +473,10 @@ export default function SettingsPage() {
     updateDownloadAlertIdRef.current = null;
 
     try {
-      const result = await downloadClientUpdate(
-        snapshot.client_update.latest_version,
-        snapshot.client_update.download_url
-      );
+      await downloadClientUpdate(snapshot.client_update.latest_version);
       showAlert({
-        title: "更新包已下载",
-        description: result.package_path,
+        title: "更新安装完成",
+        description: "应用即将自动重启并应用新版本",
         status: "success",
         timeout: 5000,
       });

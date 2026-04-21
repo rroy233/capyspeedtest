@@ -77,6 +77,7 @@ fn main() {
     );
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(commands::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings_snapshot,

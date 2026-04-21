@@ -19,15 +19,12 @@ export async function runScheduledUpdateChecks(
 }
 
 export async function downloadClientUpdate(
-  version: string,
-  downloadUrl: string,
-  expectedSha256?: string
+  version?: string
 ): Promise<ClientUpdateDownloadResult> {
-  return invokeTauri<ClientUpdateDownloadResult>("download_client_update", {
-    version,
-    downloadUrl,
-    expectedSha256,
-  });
+  return invokeTauri<ClientUpdateDownloadResult>(
+    "download_client_update",
+    version ? { version } : undefined
+  );
 }
 
 export async function listenUpdateCheckProgress(
