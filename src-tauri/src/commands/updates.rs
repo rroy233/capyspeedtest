@@ -76,13 +76,13 @@ pub async fn check_client_update(
                 release_notes: String::new(),
             }
         } else {
-        ClientUpdateStatus {
-            current_version: current_version.clone(),
-            latest_version: update.version.clone(),
-            has_update: true,
-            download_url: String::new(),
-            release_notes: update.body.unwrap_or_default(),
-        }
+            ClientUpdateStatus {
+                current_version: current_version.clone(),
+                latest_version: update.version.clone(),
+                has_update: true,
+                download_url: String::new(),
+                release_notes: update.body.unwrap_or_default(),
+            }
         }
     } else {
         ClientUpdateStatus {
