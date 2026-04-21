@@ -86,10 +86,11 @@ pub async fn check_kernel_geoip_updates(
     state: tauri::State<'_, AppState>,
 ) -> Result<KernelGeoIpCheckResult, String> {
     let platform = services::detect_platform();
-    let local_versions = services::kernel::list_local_kernel_versions(&platform).unwrap_or_default();
+    let local_versions =
+        services::kernel::list_local_kernel_versions(&platform).unwrap_or_default();
     let current_kernel = state.kernel_version.lock().unwrap().clone();
-    let current_exists = services::kernel::kernel_binary_exists(&platform, &current_kernel)
-        .unwrap_or(false);
+    let current_exists =
+        services::kernel::kernel_binary_exists(&platform, &current_kernel).unwrap_or(false);
     let versions = services::list_kernel_versions(&platform).await;
     let now = services::current_timestamp();
     let ip_database_version = state.ip_database_version.lock().unwrap().clone();

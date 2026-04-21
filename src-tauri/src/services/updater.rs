@@ -2,12 +2,13 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
 use semver::Version;
+use serde::Deserialize;
 
 use crate::models::{ClientUpdateDownloadResult, ClientUpdateStatus};
 
-const CLIENT_RELEASES_API: &str = "https://api.github.com/repos/rroy233/capyspeedtest/releases?per_page=30";
+const CLIENT_RELEASES_API: &str =
+    "https://api.github.com/repos/rroy233/capyspeedtest/releases?per_page=30";
 
 #[derive(Debug, Clone, Deserialize)]
 struct GitHubAsset {
@@ -81,7 +82,10 @@ fn select_latest_semver_release(releases: &[GitHubRelease]) -> Result<&GitHubRel
         let Ok(version) = normalize_semver(&release.tag_name) else {
             continue;
         };
-        if best_version.as_ref().is_none_or(|current| version > *current) {
+        if best_version
+            .as_ref()
+            .is_none_or(|current| version > *current)
+        {
             best_version = Some(version);
             best_release = Some(release);
         }
@@ -108,7 +112,11 @@ fn select_release_asset(release: &GitHubRelease) -> Option<&GitHubAsset> {
         return assets
             .iter()
             .find(|asset| matches(asset, &["windows", ".msi"]))
-            .or_else(|| assets.iter().find(|asset| matches(asset, &["windows", ".exe"])))
+            .or_else(|| {
+                assets
+                    .iter()
+                    .find(|asset| matches(asset, &["windows", ".exe"]))
+            })
             .or_else(|| assets.first());
     }
 
@@ -130,9 +138,21 @@ fn select_release_asset(release: &GitHubRelease) -> Option<&GitHubAsset> {
         return assets
             .iter()
             .find(|asset| matches(asset, &["linux", linux_arch, ".appimage"]))
-            .or_else(|| assets.iter().find(|asset| matches(asset, &["linux", linux_arch, ".deb"])))
-            .or_else(|| assets.iter().find(|asset| matches(asset, &["linux", ".appimage"])))
-            .or_else(|| assets.iter().find(|asset| matches(asset, &["linux", ".deb"])))
+            .or_else(|| {
+                assets
+                    .iter()
+                    .find(|asset| matches(asset, &["linux", linux_arch, ".deb"]))
+            })
+            .or_else(|| {
+                assets
+                    .iter()
+                    .find(|asset| matches(asset, &["linux", ".appimage"]))
+            })
+            .or_else(|| {
+                assets
+                    .iter()
+                    .find(|asset| matches(asset, &["linux", ".deb"]))
+            })
             .or_else(|| assets.first());
     }
 

@@ -121,8 +121,8 @@ pub fn list_local_kernel_versions(platform: &str) -> Result<Vec<String>, String>
     }
 
     let mut versions = Vec::new();
-    let entries = std::fs::read_dir(&kernels_dir)
-        .map_err(|error| format!("读取内核目录失败: {error}"))?;
+    let entries =
+        std::fs::read_dir(&kernels_dir).map_err(|error| format!("读取内核目录失败: {error}"))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("读取内核目录项失败: {error}"))?;
         let path = entry.path();
@@ -1683,9 +1683,7 @@ impl MihomoProcess {
         match child.try_wait() {
             Ok(Some(_)) => Ok(()),
             Ok(None) => {
-                child
-                    .kill()
-                    .map_err(|e| format!("停止 mihomo 失败: {e}"))?;
+                child.kill().map_err(|e| format!("停止 mihomo 失败: {e}"))?;
                 child
                     .wait()
                     .map(|_| ())
@@ -1955,23 +1953,33 @@ impl MihomoProcessRegistry {
     /// 全局注册表单例
     pub fn global() -> &'static Arc<Self> {
         static REGISTRY: OnceLock<Arc<MihomoProcessRegistry>> = OnceLock::new();
-        REGISTRY.get_or_init(|| Arc::new(MihomoProcessRegistry {
-            pids: Mutex::new(HashSet::new()),
-        }))
+        REGISTRY.get_or_init(|| {
+            Arc::new(MihomoProcessRegistry {
+                pids: Mutex::new(HashSet::new()),
+            })
+        })
     }
 
     /// 注册一个 Mihomo 进程的 PID
     pub fn register_pid(&self, pid: u32) {
         let mut pids = self.pids.lock().unwrap();
         pids.insert(pid);
-        info!("[Registry] 注册 Mihomo PID: {}, 当前追踪数: {}", pid, pids.len());
+        info!(
+            "[Registry] 注册 Mihomo PID: {}, 当前追踪数: {}",
+            pid,
+            pids.len()
+        );
     }
 
     /// 反注册一个 Mihomo 进程的 PID
     pub fn unregister_pid(&self, pid: u32) {
         let mut pids = self.pids.lock().unwrap();
         if pids.remove(&pid) {
-            info!("[Registry] 反注册 Mihomo PID: {}, 剩余: {}", pid, pids.len());
+            info!(
+                "[Registry] 反注册 Mihomo PID: {}, 剩余: {}",
+                pid,
+                pids.len()
+            );
         }
     }
 
@@ -1980,7 +1988,10 @@ impl MihomoProcessRegistry {
     pub fn shutdown_all(&self) {
         let pids: Vec<u32> = {
             let pids = self.pids.lock().unwrap();
-            info!("[Registry] 关闭所有 Mihomo 进程, 当前注册数: {}", pids.len());
+            info!(
+                "[Registry] 关闭所有 Mihomo 进程, 当前注册数: {}",
+                pids.len()
+            );
             pids.iter().copied().collect()
         };
 
@@ -1998,7 +2009,10 @@ impl MihomoProcessRegistry {
     pub fn shutdown_all(&self) {
         let pids: Vec<u32> = {
             let pids = self.pids.lock().unwrap();
-            info!("[Registry] 关闭所有 Mihomo 进程, 当前注册数: {}", pids.len());
+            info!(
+                "[Registry] 关闭所有 Mihomo 进程, 当前注册数: {}",
+                pids.len()
+            );
             pids.iter().copied().collect()
         };
 
@@ -2023,7 +2037,10 @@ impl MihomoProcessRegistry {
                     return;
                 }
             };
-            let config_prefix = app_data.join("speedtest_configs").to_string_lossy().to_string();
+            let config_prefix = app_data
+                .join("speedtest_configs")
+                .to_string_lossy()
+                .to_string();
 
             if let Err(e) = cleanup_orphaned_impl(&config_prefix) {
                 warn!("[Registry] 清理孤儿进程失败: {}", e);
@@ -2055,12 +2072,17 @@ fn cleanup_orphaned_impl(config_prefix: &str) -> Result<(), String> {
             }
             // CSV 格式: "mihomo.exe","1234","Session Name","Session#","Mem Usage"
             let pid = parts[1].trim_matches('"');
-            let Ok(pid_u32) = pid.parse::<u32>() else { continue };
+            let Ok(pid_u32) = pid.parse::<u32>() else {
+                continue;
+            };
 
             // 检查进程命令行参数
             if let Ok(cmdline) = get_process_commandline(pid_u32) {
                 if cmdline.contains("-f") && cmdline.contains(config_prefix) {
-                    info!("[Registry] 发现孤儿 Mihomo 进程, pid={}, cmdline={}", pid, cmdline);
+                    info!(
+                        "[Registry] 发现孤儿 Mihomo 进程, pid={}, cmdline={}",
+                        pid, cmdline
+                    );
                     if let Err(e) = kill_process_by_pid(pid_u32) {
                         warn!("[Registry] 杀死孤儿进程失败: {}", e);
                     }
@@ -2079,13 +2101,17 @@ fn cleanup_orphaned_impl(config_prefix: &str) -> Result<(), String> {
 
 #[cfg(windows)]
 fn get_process_commandline(pid: u32) -> Result<String, String> {
-    use std::ptr;
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
+    use std::ptr;
 
     #[link(name = "kernel32")]
     extern "system" {
-        fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut std::ffi::c_void;
+        fn OpenProcess(
+            desired_access: u32,
+            inherit_handle: i32,
+            process_id: u32,
+        ) -> *mut std::ffi::c_void;
         fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
         fn QueryFullProcessImageNameW(
             process: *mut std::ffi::c_void,

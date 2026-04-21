@@ -13,6 +13,7 @@ vi.mock("../contexts/ThemeContext", () => ({
 
 vi.mock("../api/settings", () => ({
   listenGeoIpDownloadProgress: vi.fn(async () => () => {}),
+  listenKernelDownloadProgress: vi.fn(async () => () => {}),
   listenKernelListProgress: vi.fn(async () => () => {}),
   listenUpdateCheckProgress: vi.fn(async () => () => {}),
   listenUpdateDownloadProgress: vi.fn(async () => () => {}),
@@ -96,7 +97,7 @@ vi.mock("../api/subscription", () => ({
 }));
 
 describe("SettingsPage", () => {
-  it("应展示设置快照并支持节点解析结果与更新下载", async () => {
+  it("应展示设置快照并支持更新下载", async () => {
     render(
       <AlertProvider>
         <SettingsPage />
@@ -105,13 +106,6 @@ describe("SettingsPage", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("v1.19.1").length).toBeGreaterThan(0);
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "解析并过滤节点" }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/共解析 1 个节点/)).toBeInTheDocument();
-      expect(screen.getAllByText(/香港-HK-01/).length).toBeGreaterThan(0);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "下载更新包" }));

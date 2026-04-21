@@ -3,8 +3,7 @@
 use crate::commands::{runtime_app_version, AppState};
 use crate::models::{
     GeoIpDownloadProgressEvent, IpDatabaseStatus, KernelDownloadProgressEvent,
-    KernelListProgressEvent, KernelStatus,
-    SettingsSnapshot,
+    KernelListProgressEvent, KernelStatus, SettingsSnapshot,
 };
 use crate::services;
 use tauri::Emitter;
@@ -46,8 +45,8 @@ pub async fn get_settings_snapshot(
         let mut local_guard = state.installed_kernel_versions.lock().unwrap();
         *local_guard = local_installed.clone();
     }
-    let current_exists = services::kernel::kernel_binary_exists(&platform, &current_kernel)
-        .unwrap_or(false);
+    let current_exists =
+        services::kernel::kernel_binary_exists(&platform, &current_kernel).unwrap_or(false);
 
     let mut installed = state.cached_kernel_versions.lock().unwrap().clone();
     if installed.is_empty() {
