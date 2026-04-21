@@ -2168,6 +2168,24 @@ fn kill_process_by_pid(pid: u32) -> Result<(), String> {
     }
 }
 
+#[cfg(not(windows))]
+fn kill_process_by_pid(pid: u32) -> Result<(), String> {
+    let output = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .output()
+        .map_err(|e| format!("执行 kill 失败: {}", e))?;
+
+    if output.status.success() {
+        info!("[Registry] 已杀死进程, pid={}", pid);
+        Ok(())
+    } else {
+        Err(format!(
+            "kill 失败: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
 use std::sync::OnceLock;
 #[cfg(test)]
 mod tests {
