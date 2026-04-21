@@ -108,6 +108,8 @@ fn main() {
             commands::prepare_app_exit,
         ])
         .setup(|app| {
+            // 清理上次遗留的 Mihomo 进程
+            services::kernel::MihomoProcessRegistry::cleanup_orphaned_background();
             info!("Tauri 应用 setup 完成，窗口创建完毕");
             Ok(())
         })

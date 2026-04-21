@@ -1674,6 +1674,8 @@ pub struct MihomoProcess {
     socks_port: u16,
     api_port: u16,
     cleaned_up: bool,
+    /// 配置文件路径，用于注册表追踪
+    config_path: Option<String>,
 }
 
 impl MihomoProcess {
@@ -1780,6 +1782,7 @@ rules:
             socks_port,
             api_port,
             cleaned_up: false,
+            config_path: None,
         })
     }
 
@@ -1866,6 +1869,7 @@ rules:
             socks_port,
             api_port,
             cleaned_up: false,
+            config_path: None,
         })
     }
 
@@ -1885,6 +1889,11 @@ rules:
     pub fn api_port(&self) -> u16 {
         self.api_port
     }
+
+    /// 获取进程 PID
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
 }
 
 impl Drop for MihomoProcess {
@@ -1898,6 +1907,242 @@ impl Drop for MihomoProcess {
     }
 }
 
+/// 基于 PID 的进程标识，用于 HashSet 去重
+impl PartialEq for MihomoProcess {
+    fn eq(&self, other: &Self) -> bool {
+        self.child.id() == other.child.id()
+    }
+}
+
+impl Eq for MihomoProcess {}
+
+impl std::hash::Hash for MihomoProcess {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.child.id().hash(state);
+    }
+}
+
+impl MihomoProcess {
+    /// 设置配置文件路径
+    pub fn set_config_path(&mut self, path: String) {
+        self.config_path = Some(path);
+    }
+
+    /// 获取配置文件路径
+    pub fn config_path(&self) -> Option<&str> {
+        self.config_path.as_deref()
+    }
+
+    /// 判断进程是否仍存活
+    pub fn is_alive(&mut self) -> bool {
+        self.child.try_wait().map(|s| s.is_none()).unwrap_or(false)
+    }
+}
+
+// ============================================================================
+// MihomoProcessRegistry — 全局进程注册表（基于 PID 追踪）
+// ============================================================================
+
+use std::sync::{Arc, Mutex};
+
+/// 全局 Mihomo 进程注册表
+/// 仅追踪 PID，不拥有进程句柄。进程仍由调用者管理。
+pub struct MihomoProcessRegistry {
+    pids: Mutex<HashSet<u32>>,
+}
+
+impl MihomoProcessRegistry {
+    /// 全局注册表单例
+    pub fn global() -> &'static Arc<Self> {
+        static REGISTRY: OnceLock<Arc<MihomoProcessRegistry>> = OnceLock::new();
+        REGISTRY.get_or_init(|| Arc::new(MihomoProcessRegistry {
+            pids: Mutex::new(HashSet::new()),
+        }))
+    }
+
+    /// 注册一个 Mihomo 进程的 PID
+    pub fn register_pid(&self, pid: u32) {
+        let mut pids = self.pids.lock().unwrap();
+        pids.insert(pid);
+        info!("[Registry] 注册 Mihomo PID: {}, 当前追踪数: {}", pid, pids.len());
+    }
+
+    /// 反注册一个 Mihomo 进程的 PID
+    pub fn unregister_pid(&self, pid: u32) {
+        let mut pids = self.pids.lock().unwrap();
+        if pids.remove(&pid) {
+            info!("[Registry] 反注册 Mihomo PID: {}, 剩余: {}", pid, pids.len());
+        }
+    }
+
+    /// 关闭所有注册的进程（通过 OS 级 kill）
+    #[cfg(windows)]
+    pub fn shutdown_all(&self) {
+        let pids: Vec<u32> = {
+            let pids = self.pids.lock().unwrap();
+            info!("[Registry] 关闭所有 Mihomo 进程, 当前注册数: {}", pids.len());
+            pids.iter().copied().collect()
+        };
+
+        for pid in pids {
+            if let Err(e) = kill_process_by_pid(pid) {
+                warn!("[Registry] 关闭 Mihomo (pid={}) 失败: {}", pid, e);
+            }
+            // 即使失败也移除，因为进程可能已经崩溃退出
+            self.unregister_pid(pid);
+        }
+    }
+
+    /// 关闭所有注册的进程（非 Windows 版本）
+    #[cfg(not(windows))]
+    pub fn shutdown_all(&self) {
+        let pids: Vec<u32> = {
+            let pids = self.pids.lock().unwrap();
+            info!("[Registry] 关闭所有 Mihomo 进程, 当前注册数: {}", pids.len());
+            pids.iter().copied().collect()
+        };
+
+        for pid in pids {
+            if let Err(e) = kill_process_by_pid(pid) {
+                warn!("[Registry] 关闭 Mihomo (pid={}) 失败: {}", pid, e);
+            }
+            self.unregister_pid(pid);
+        }
+    }
+
+    /// 清理启动时可能存在的孤儿 Mihomo 进程
+    /// 在后台线程中执行，不阻塞调用者
+    pub fn cleanup_orphaned_background() {
+        std::thread::spawn(|| {
+            info!("[Registry] 开始清理孤儿 Mihomo 进程...");
+
+            let app_data = match crate::services::state_app_data_root() {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("[Registry] 获取应用数据目录失败: {}", e);
+                    return;
+                }
+            };
+            let config_prefix = app_data.join("speedtest_configs").to_string_lossy().to_string();
+
+            if let Err(e) = cleanup_orphaned_impl(&config_prefix) {
+                warn!("[Registry] 清理孤儿进程失败: {}", e);
+            }
+        });
+    }
+}
+
+fn cleanup_orphaned_impl(config_prefix: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+
+        // 使用 tasklist 获取所有 mihomo.exe 进程
+        let output = Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq mihomo.exe", "/FO", "CSV", "/NH"])
+            .output()
+            .map_err(|e| format!("执行 tasklist 失败: {}", e))?;
+
+        if !output.status.success() {
+            return Ok(()); // 没有 mihomo 进程，正常返回
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() < 2 {
+                continue;
+            }
+            // CSV 格式: "mihomo.exe","1234","Session Name","Session#","Mem Usage"
+            let pid = parts[1].trim_matches('"');
+            let Ok(pid_u32) = pid.parse::<u32>() else { continue };
+
+            // 检查进程命令行参数
+            if let Ok(cmdline) = get_process_commandline(pid_u32) {
+                if cmdline.contains("-f") && cmdline.contains(config_prefix) {
+                    info!("[Registry] 发现孤儿 Mihomo 进程, pid={}, cmdline={}", pid, cmdline);
+                    if let Err(e) = kill_process_by_pid(pid_u32) {
+                        warn!("[Registry] 杀死孤儿进程失败: {}", e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(()) // 非 Windows 平台暂不支持
+    }
+}
+
+#[cfg(windows)]
+fn get_process_commandline(pid: u32) -> Result<String, String> {
+    use std::ptr;
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut std::ffi::c_void;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+        fn QueryFullProcessImageNameW(
+            process: *mut std::ffi::c_void,
+            flags: u32,
+            exe_name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+    }
+
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return Err(format!("OpenProcess 失败, pid={}", pid));
+        }
+
+        let mut buffer: [u16; 1024] = [0; 1024];
+        let mut size: u32 = 1024;
+
+        let success = QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size);
+        CloseHandle(handle);
+
+        if success == 0 {
+            return Err(format!("QueryFullProcessImageNameW 失败, pid={}", pid));
+        }
+
+        let name = OsString::from_wide(&buffer[..size as usize])
+            .to_string_lossy()
+            .to_string();
+
+        // 对于 mihomo，我们主要关心命令行参数，这里返回进程路径
+        Ok(name)
+    }
+}
+
+#[cfg(windows)]
+fn kill_process_by_pid(pid: u32) -> Result<(), String> {
+    use std::process::Command;
+
+    let output = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .output()
+        .map_err(|e| format!("执行 taskkill 失败: {}", e))?;
+
+    if output.status.success() {
+        info!("[Registry] 已杀死孤儿进程, pid={}", pid);
+        Ok(())
+    } else {
+        Err(format!(
+            "taskkill 失败: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+use std::sync::OnceLock;
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -546,7 +546,7 @@ use crate::models::{
     GeoIpInfo, GeoIpSnapshotItem, NodeInfo, SpeedTestProgressEvent, SpeedTestResult,
     SpeedTestTaskConfig,
 };
-use crate::services::kernel::MihomoProcess;
+use crate::services::kernel::{MihomoProcess, MihomoProcessRegistry};
 use crate::services::state::app_data_root;
 
 /// 内部测速实时事件。
@@ -2476,6 +2476,8 @@ where
             {
                 Ok(m) => {
                     info!("[测速] Mihomo 启动成功, SOCKS5={}", m.proxy_addr());
+                    // 注册到全局进程表
+                    MihomoProcessRegistry::global().register_pid(m.pid());
                     m
                 }
                 Err(e) => {
@@ -2655,6 +2657,8 @@ where
         }
 
         // 关闭 Mihomo 进程
+        let pid = mihomo.pid();
+        MihomoProcessRegistry::global().unregister_pid(pid);
         if let Err(e) = mihomo.shutdown() {
             warn!("[测速] 关闭 Mihomo 失败: {}", e);
         }

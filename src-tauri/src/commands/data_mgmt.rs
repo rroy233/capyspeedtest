@@ -110,12 +110,17 @@ pub fn clear_user_data() -> Result<(), String> {
     Ok(())
 }
 
-/// 应用退出前收尾清理：移除测速临时配置与遗留本地历史缓存文件。
+/// 应用退出前收尾清理：关闭所有 Mihomo 进程，移除测速临时配置与遗留本地历史缓存文件。
 #[tauri::command]
 pub fn prepare_app_exit() -> Result<(), String> {
     info!("[命令] prepare_app_exit 开始");
+
+    // 1. 关闭所有 Mihomo 进程
+    services::kernel::MihomoProcessRegistry::global().shutdown_all();
+
     let app_data = services::state_app_data_root()?;
 
+    // 2. 清理配置文件目录
     let speedtest_configs_dir = app_data.join("speedtest_configs");
     if speedtest_configs_dir.exists() {
         fs::remove_dir_all(&speedtest_configs_dir)
@@ -123,6 +128,7 @@ pub fn prepare_app_exit() -> Result<(), String> {
         info!("[命令] 已清理测速配置目录: {:?}", speedtest_configs_dir);
     }
 
+    // 3. 清理遗留历史文件
     let legacy_history_file = app_data.join("speedtest_history.json");
     if legacy_history_file.exists() {
         fs::remove_file(&legacy_history_file)
