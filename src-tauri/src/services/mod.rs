@@ -10,9 +10,11 @@
 //! | `speedtest` | 真实网络测速（TCP Ping、HTTP 下载/上传、NAT 检测） |
 //! | `updater` | GitHub 版本检查、客户端更新包下载 |
 //! | `system_proxy` | Windows 系统代理自动检测 |
+//! | `http_client` | 非测速场景全局 HTTP 单例客户端（含系统代理） |
 
 pub mod checkpoint;
 pub mod geoip;
+pub mod http_client;
 pub mod kernel;
 pub mod speedtest;
 pub mod state;

@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::models::{NodeConnectInfo, NodeFilter, NodeInfo};
+use crate::services::http_client::shared_http_client;
 use base64::Engine;
 use regex::Regex;
 use serde::Deserialize;
@@ -47,13 +48,10 @@ pub fn parse_subscription_nodes(raw_input: &str) -> Vec<NodeInfo> {
 
 /// 从远程 URL 获取订阅内容并解析为节点列表（异步）。
 pub async fn fetch_subscription_from_url(url: &str) -> Result<Vec<NodeInfo>, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .user_agent("capyspeedtest/0.1")
-        .build()
-        .map_err(|e| format!("初始化客户端失败: {e}"))?;
+    let client = shared_http_client()?;
     let response = client
         .get(url)
+        .timeout(Duration::from_secs(30))
         .header("User-Agent", "capyspeedtest/0.1")
         .send()
         .await

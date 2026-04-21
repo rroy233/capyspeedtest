@@ -3,6 +3,7 @@
 //! 使用 MaxMind 的 .mmdb 格式数据库进行离线 IP 地理位置查询。
 
 use crate::models::GeoIpInfo;
+use crate::services::http_client::shared_http_client;
 use maxminddb::Reader;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -1051,14 +1052,10 @@ async fn download_file_async(
     target_path: &std::path::Path,
     retries: usize,
 ) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .user_agent("capyspeedtest/0.1")
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    let client = shared_http_client()?;
 
     for attempt in 0..=retries {
-        match download_file_once_async(&client, url, target_path).await {
+        match download_file_once_async(client, url, target_path).await {
             Ok(()) => return Ok(()),
             Err(e) if attempt < retries => {
                 eprintln!("下载失败 (尝试 {}/{}): {}", attempt + 1, retries + 1, e);
@@ -1077,6 +1074,7 @@ async fn download_file_once_async(
 ) -> Result<(), String> {
     let response = client
         .get(url)
+        .timeout(std::time::Duration::from_secs(60))
         .send()
         .await
         .map_err(|e| format!("下载请求失败: {e}"))?

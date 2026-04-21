@@ -4,34 +4,12 @@ use std::time::Duration;
 
 use semver::Version;
 use serde::Deserialize;
-use tracing::info;
 
 use crate::models::{ClientUpdateDownloadResult, ClientUpdateStatus};
-use crate::services::system_proxy::get_system_proxy;
+use crate::services::http_client::shared_http_client;
 
 const CLIENT_RELEASES_API: &str =
     "https://api.github.com/repos/rroy233/capyspeedtest/releases?per_page=30";
-
-/// 构建带系统代理支持的 reqwest Client。
-fn build_client(timeout: Duration) -> Result<reqwest::Client, String> {
-    let proxy_config = get_system_proxy();
-    let mut builder = reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent("capyspeedtest/0.1");
-
-    if proxy_config.enabled {
-        if let Some(proxy_url) = &proxy_config.proxy_url {
-            let proxy =
-                reqwest::Proxy::all(proxy_url).map_err(|e| format!("构建系统代理失败: {e}"))?;
-            builder = builder.proxy(proxy);
-            tracing::info!("[Updater] 使用系统代理: {}", proxy_url);
-        }
-    }
-
-    builder
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))
-}
 
 #[derive(Debug, Clone, Deserialize)]
 struct GitHubAsset {
@@ -68,9 +46,10 @@ pub async fn try_check_client_update(current_version: &str) -> Result<ClientUpda
 }
 
 async fn fetch_releases(api_url: &str) -> Result<Vec<GitHubRelease>, String> {
-    let client = build_client(Duration::from_secs(30))?;
+    let client = shared_http_client()?;
     let releases = client
         .get(api_url)
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|error| format!("获取最新版本失败: {error}"))?
@@ -290,10 +269,10 @@ async fn download_file_async(
     target_path: &std::path::Path,
     retries: usize,
 ) -> Result<(), String> {
-    let client = build_client(Duration::from_secs(60))?;
+    let client = shared_http_client()?;
 
     for attempt in 0..=retries {
-        match download_file_once_async(&client, url, target_path).await {
+        match download_file_once_async(client, url, target_path).await {
             Ok(()) => return Ok(()),
             Err(e) if attempt < retries => {
                 eprintln!("下载失败 (尝试 {}/{}): {}", attempt + 1, retries + 1, e);
@@ -312,6 +291,7 @@ async fn download_file_once_async(
 ) -> Result<(), String> {
     let response = client
         .get(url)
+        .timeout(Duration::from_secs(60))
         .send()
         .await
         .map_err(|e| format!("下载请求失败: {e}"))?

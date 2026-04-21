@@ -18,6 +18,7 @@ use url::Url;
 use zip::ZipArchive;
 
 use crate::models::KernelDownloadProgressEvent;
+use crate::services::http_client::shared_http_client;
 
 pub const DEFAULT_KERNEL_VERSIONS: [&str; 3] = ["v1.19.1", "v1.19.0", "v1.18.5"];
 
@@ -177,9 +178,10 @@ struct KernelDownload {
 async fn fetch_kernel_releases(limit: usize) -> Result<Vec<GitHubRelease>, String> {
     info!("[内核下载] 开始获取内核版本列表, limit: {}", limit);
     let url = format!("{}?per_page={}", MIHOMO_RELEASES_API, limit);
-    let client = async_github_client().await?;
+    let client = github_client()?;
     let resp = client
         .get(&url)
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|error| {
@@ -207,9 +209,10 @@ async fn fetch_kernel_releases(limit: usize) -> Result<Vec<GitHubRelease>, Strin
 async fn fetch_release_by_tag(tag: &str) -> Result<GitHubRelease, String> {
     info!("[内核下载] 开始获取内核版本信息, tag: {}", tag);
     let url = format!("{}/{}", MIHOMO_RELEASE_BY_TAG_API, tag);
-    let client = async_github_client().await?;
+    let client = github_client()?;
     let resp = client
         .get(&url)
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|error| {
@@ -234,16 +237,12 @@ async fn fetch_release_by_tag(tag: &str) -> Result<GitHubRelease, String> {
     Ok(resp)
 }
 
-async fn async_github_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .user_agent("capyspeedtest/0.1")
-        .build()
-        .map_err(|error| {
-            let msg = format!("初始化 GitHub 客户端失败: {error}");
-            error!("[内核下载] {}", msg);
-            msg
-        })
+fn github_client() -> Result<&'static reqwest::Client, String> {
+    shared_http_client().map_err(|error| {
+        let msg = format!("初始化 GitHub 客户端失败: {error}");
+        error!("[内核下载] {}", msg);
+        msg
+    })
 }
 
 fn kernel_asset_matches_platform(platform: &str, asset_name: &str) -> bool {
@@ -523,9 +522,10 @@ where
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    let client = async_github_client().await?;
+    let client = github_client()?;
     let response = client
         .get(url)
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|e| {
