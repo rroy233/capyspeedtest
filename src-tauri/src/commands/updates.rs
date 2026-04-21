@@ -474,14 +474,19 @@ pub async fn download_client_update(
             );
 
             #[cfg(not(target_os = "windows"))]
-            app.restart();
+            {
+                app.restart();
+            }
 
-            Ok(ClientUpdateDownloadResult {
-                version: target_version,
-                package_path: "managed-by-tauri-updater".to_string(),
-                backup_path: None,
-                rolled_back: false,
-            })
+            #[cfg(target_os = "windows")]
+            {
+                Ok(ClientUpdateDownloadResult {
+                    version: target_version,
+                    package_path: "managed-by-tauri-updater".to_string(),
+                    backup_path: None,
+                    rolled_back: false,
+                })
+            }
         }
         Err(e) => {
             let message = format!("安装更新失败: {}", e);
