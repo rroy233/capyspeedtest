@@ -1,0 +1,43 @@
+name: "❓ Question / 提问"
+description: |
+  Ask a question about usage or configuration.
+  询问使用或配置相关问题。
+labels:
+  - question
+body:
+  - type: checkboxes
+    attributes:
+      label: Self Checks / 自检
+      options:
+        - label: |
+            I have searched for [existing issues](https://github.com/rroy233/capyspeedtest/issues), including closed ones.
+            我已搜索过[已有的 Issue](https://github.com/rroy233/capyspeedtest/issues)，包括已关闭的。
+          required: true
+
+  - type: textarea
+    attributes:
+      label: Your Question / 你的问题
+      description: |
+        Describe your question clearly.
+        请清晰地描述你的问题。
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: What Have You Tried / 你已经尝试过什么
+      description: |
+        Describe what you've already tried or researched.
+        描述你已经尝试过或查阅过的内容。
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Environment / 环境信息
+      description: |
+        OS, CapySpeedtest version, and any relevant details.
+        操作系统、CapySpeedtest 版本及其他相关信息。
+      placeholder: "e.g. Windows 11, CapySpeedtest 0.1.0"
+    validations:
+      required: false
