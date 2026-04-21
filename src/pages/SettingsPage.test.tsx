@@ -35,6 +35,9 @@ vi.mock("../api/settings", () => ({
       download_url: "https://example.test/release",
       release_notes: "mock release note",
     },
+    update_preferences: {
+      receive_prerelease: false,
+    },
   })),
   getDataDirectoryInfo: vi.fn(async () => ({
     path: "C:/Users/test/AppData/Local/capyspeedtest",
@@ -64,6 +67,9 @@ vi.mock("../api/settings", () => ({
     has_update: true,
     download_url: "https://example.test/release",
     release_notes: "mock release note",
+  })),
+  setUpdatePreferences: vi.fn(async (receivePrerelease: boolean) => ({
+    receive_prerelease: receivePrerelease,
   })),
   downloadClientUpdate: vi.fn(async () => ({
     version: "0.2.0",

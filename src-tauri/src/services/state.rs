@@ -25,6 +25,8 @@ pub struct PersistedState {
     pub client_update_last_checked_at: String,
     #[serde(default)]
     pub client_update_cache: Option<ClientUpdateStatus>,
+    #[serde(default)]
+    pub receive_prerelease_updates: bool,
 }
 
 impl Default for PersistedState {
@@ -41,6 +43,7 @@ impl Default for PersistedState {
             geoip_last_checked_at: "0".to_string(),
             client_update_last_checked_at: "0".to_string(),
             client_update_cache: None,
+            receive_prerelease_updates: false,
         }
     }
 }

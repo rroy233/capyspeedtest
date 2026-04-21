@@ -4,11 +4,16 @@ use crate::commands::{parse_ts_seconds, runtime_app_version, AppState, WEEK_SECO
 use crate::models::{
     ClientUpdateDownloadResult, ClientUpdateStatus, KernelGeoIpCheckResult,
     ScheduledUpdateCheckResult, UpdateCheckProgressEvent, UpdateDownloadProgressEvent,
+    UpdatePreferences,
 };
 use crate::services;
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
 use tracing::{info, warn};
+
+fn is_prerelease_version(version: &str) -> bool {
+    version.contains('-')
+}
 
 /// 检查客户端是否存在更新（异步）。
 #[tauri::command]
@@ -19,6 +24,7 @@ pub async fn check_client_update(
     _current_version: String,
 ) -> Result<ClientUpdateStatus, String> {
     let current_version = runtime_app_version(&app);
+    let receive_prerelease = *state.receive_prerelease_updates.lock().unwrap();
     info!("[命令] check_client_update current={}", current_version);
 
     let _ = window.emit(
@@ -61,12 +67,22 @@ pub async fn check_client_update(
     };
 
     let result = if let Some(update) = update {
+        if !receive_prerelease && is_prerelease_version(&update.version) {
+            ClientUpdateStatus {
+                current_version: current_version.clone(),
+                latest_version: current_version.clone(),
+                has_update: false,
+                download_url: String::new(),
+                release_notes: String::new(),
+            }
+        } else {
         ClientUpdateStatus {
             current_version: current_version.clone(),
             latest_version: update.version.clone(),
             has_update: true,
             download_url: String::new(),
             release_notes: update.body.unwrap_or_default(),
+        }
         }
     } else {
         ClientUpdateStatus {
@@ -227,6 +243,7 @@ pub async fn run_scheduled_update_checks(
     }
 
     let current_version = current_client_version.unwrap_or_else(|| runtime_app_version(&app));
+    let receive_prerelease = *state.receive_prerelease_updates.lock().unwrap();
 
     let update_result = match app.updater_builder().build() {
         Ok(updater) => updater.check().await.map_err(|error| error.to_string()),
@@ -236,12 +253,22 @@ pub async fn run_scheduled_update_checks(
     match update_result {
         Ok(update) => {
             let status = if let Some(update) = update {
-                ClientUpdateStatus {
-                    current_version: current_version.clone(),
-                    latest_version: update.version.clone(),
-                    has_update: true,
-                    download_url: String::new(),
-                    release_notes: update.body.unwrap_or_default(),
+                if !receive_prerelease && is_prerelease_version(&update.version) {
+                    ClientUpdateStatus {
+                        current_version: current_version.clone(),
+                        latest_version: current_version.clone(),
+                        has_update: false,
+                        download_url: String::new(),
+                        release_notes: String::new(),
+                    }
+                } else {
+                    ClientUpdateStatus {
+                        current_version: current_version.clone(),
+                        latest_version: update.version.clone(),
+                        has_update: true,
+                        download_url: String::new(),
+                        release_notes: update.body.unwrap_or_default(),
+                    }
                 }
             } else {
                 ClientUpdateStatus {
@@ -310,6 +337,7 @@ pub async fn run_scheduled_update_checks(
 pub async fn download_client_update(
     app: tauri::AppHandle,
     window: tauri::Window,
+    state: tauri::State<'_, AppState>,
     version: Option<String>,
 ) -> Result<ClientUpdateDownloadResult, String> {
     let label_version = version.unwrap_or_else(|| "latest".to_string());
@@ -325,9 +353,26 @@ pub async fn download_client_update(
         },
     );
 
+    let receive_prerelease = *state.receive_prerelease_updates.lock().unwrap();
+
     let update = match app.updater_builder().build() {
         Ok(updater) => match updater.check().await {
-            Ok(Some(update)) => update,
+            Ok(Some(update)) => {
+                if !receive_prerelease && is_prerelease_version(&update.version) {
+                    let message = "当前已禁用预发布版本更新".to_string();
+                    let _ = window.emit(
+                        "updater://download/progress",
+                        &UpdateDownloadProgressEvent {
+                            version: update.version.clone(),
+                            stage: "error".to_string(),
+                            progress: 0.0,
+                            message: message.clone(),
+                        },
+                    );
+                    return Err(message);
+                }
+                update
+            }
             Ok(None) => {
                 let message = "当前没有可安装更新".to_string();
                 let _ = window.emit(
@@ -453,4 +498,26 @@ pub async fn download_client_update(
             Err(message)
         }
     }
+}
+
+#[tauri::command]
+pub async fn set_update_preferences(
+    state: tauri::State<'_, AppState>,
+    receive_prerelease: bool,
+) -> Result<UpdatePreferences, String> {
+    {
+        let mut guard = state.receive_prerelease_updates.lock().unwrap();
+        *guard = receive_prerelease;
+    }
+
+    let _ = tokio::task::spawn_blocking(move || {
+        services::update_persisted_state(move |persisted| {
+            persisted.receive_prerelease_updates = receive_prerelease;
+        })
+    })
+    .await
+    .map_err(|e| format!("保存更新偏好失败: {e}"))?
+    .map_err(|e| format!("保存更新偏好失败: {e}"))?;
+
+    Ok(UpdatePreferences { receive_prerelease })
 }

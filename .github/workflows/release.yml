@@ -417,7 +417,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
           name: CapySpeedtest ${{ env.RELEASE_VERSION }}
-          prerelease: true
+          prerelease: ${{ contains(env.RELEASE_VERSION, '-beta') }}
           body_path: release-notes.md
           files: release-assets/*
         env:

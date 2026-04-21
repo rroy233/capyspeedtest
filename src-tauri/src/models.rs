@@ -33,6 +33,12 @@ pub struct ClientUpdateStatus {
     pub release_notes: String,
 }
 
+/// 更新偏好配置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdatePreferences {
+    pub receive_prerelease: bool,
+}
+
 /// 客户端更新包下载结果。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClientUpdateDownloadResult {
@@ -48,6 +54,7 @@ pub struct SettingsSnapshot {
     pub kernel: KernelStatus,
     pub ip_database: IpDatabaseStatus,
     pub client_update: ClientUpdateStatus,
+    pub update_preferences: UpdatePreferences,
 }
 
 /// 手动检查内核与 GeoIP 的结果。

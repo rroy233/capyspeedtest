@@ -88,6 +88,7 @@ fn main() {
             commands::fetch_subscription_from_url,
             commands::check_kernel_geoip_updates,
             commands::check_client_update,
+            commands::set_update_preferences,
             commands::download_client_update,
             commands::run_scheduled_update_checks,
             commands::run_speedtest_batch,

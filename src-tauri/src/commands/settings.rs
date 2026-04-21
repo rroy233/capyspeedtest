@@ -3,7 +3,7 @@
 use crate::commands::{runtime_app_version, AppState};
 use crate::models::{
     GeoIpDownloadProgressEvent, IpDatabaseStatus, KernelDownloadProgressEvent,
-    KernelListProgressEvent, KernelStatus, SettingsSnapshot,
+    KernelListProgressEvent, KernelStatus, SettingsSnapshot, UpdatePreferences,
 };
 use crate::services;
 use tauri::Emitter;
@@ -87,6 +87,9 @@ pub async fn get_settings_snapshot(
             last_checked_at: geoip_last_checked_at,
         },
         client_update,
+        update_preferences: UpdatePreferences {
+            receive_prerelease: *state.receive_prerelease_updates.lock().unwrap(),
+        },
     };
     info!("[命令] get_settings_snapshot 返回成功");
     Ok(result)

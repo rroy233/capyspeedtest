@@ -1,4 +1,4 @@
-import type { ClientUpdateDownloadResult, ClientUpdateStatus, KernelGeoIpCheckResult, ScheduledUpdateCheckResult, UpdateCheckProgressEvent, UpdateDownloadProgressEvent } from "../types/settings";
+import type { ClientUpdateDownloadResult, ClientUpdateStatus, KernelGeoIpCheckResult, ScheduledUpdateCheckResult, UpdateCheckProgressEvent, UpdateDownloadProgressEvent, UpdatePreferences } from "../types/settings";
 import { invokeTauri } from "./helpers";
 
 export async function checkClientUpdate(currentVersion: string): Promise<ClientUpdateStatus> {
@@ -25,6 +25,12 @@ export async function downloadClientUpdate(
     "download_client_update",
     version ? { version } : undefined
   );
+}
+
+export async function setUpdatePreferences(
+  receivePrerelease: boolean
+): Promise<UpdatePreferences> {
+  return invokeTauri<UpdatePreferences>("set_update_preferences", { receivePrerelease });
 }
 
 export async function listenUpdateCheckProgress(

@@ -14,6 +14,7 @@ import {
   listenUpdateCheckProgress,
   listenUpdateDownloadProgress,
   openDataDirectory,
+  setUpdatePreferences,
   selectKernelVersion,
 } from "../../api/settings";
 import { parseSubscriptionNodes } from "../../api/subscription";
@@ -66,6 +67,9 @@ const initialSnapshot: SettingsSnapshot = {
     download_url: "",
     release_notes: "",
   },
+  update_preferences: {
+    receive_prerelease: false,
+  },
 };
 
 function toErrorMessage(error: unknown, fallback: string) {
@@ -90,6 +94,7 @@ export default function SettingsPage() {
   const [loadingKernelCheck, setLoadingKernelCheck] = useState(false);
   const [loadingIpDb, setLoadingIpDb] = useState(false);
   const [loadingUpdate, setLoadingUpdate] = useState(false);
+  const [savingUpdatePreferences, setSavingUpdatePreferences] = useState(false);
   const [loadingParse, setLoadingParse] = useState(false);
   const [dataActionType, setDataActionType] = useState<DataActionType>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -100,6 +105,7 @@ export default function SettingsPage() {
   const [updateCheckProgress, setUpdateCheckProgress] = useState<UpdateCheckProgressEvent | null>(null);
   const [updateDownloadProgress, setUpdateDownloadProgress] = useState<UpdateDownloadProgressEvent | null>(null);
   const [updateCheckFailed, setUpdateCheckFailed] = useState(false);
+  const [receivePrerelease, setReceivePrerelease] = useState(false);
 
   const { showAlert } = useAlert();
   const ipDbAlertIdRef = useRef<string | null>(null);
@@ -308,6 +314,7 @@ export default function SettingsPage() {
         ]);
 
         setSnapshot(loadedSnapshot);
+        setReceivePrerelease(loadedSnapshot.update_preferences.receive_prerelease);
         setDataDirectoryInfo(directoryInfo);
 
         const cachedVersions =
@@ -460,6 +467,33 @@ export default function SettingsPage() {
       });
     } finally {
       setLoadingUpdate(false);
+    }
+  }
+
+  async function onToggleReceivePrerelease(selected: boolean) {
+    setSavingUpdatePreferences(true);
+    try {
+      const preferences = await setUpdatePreferences(selected);
+      setReceivePrerelease(preferences.receive_prerelease);
+      setSnapshot((prev) => ({
+        ...prev,
+        update_preferences: preferences,
+      }));
+      showAlert({
+        title: "更新偏好已保存",
+        description: preferences.receive_prerelease
+          ? "已开启预发布版本接收"
+          : "已关闭预发布版本接收",
+        status: "success",
+      });
+    } catch (error) {
+      showAlert({
+        title: "保存更新偏好失败",
+        description: toErrorMessage(error, "请稍后重试"),
+        status: "danger",
+      });
+    } finally {
+      setSavingUpdatePreferences(false);
     }
   }
 
@@ -666,8 +700,11 @@ export default function SettingsPage() {
                   isDownloadingUpdate={isDownloadingUpdate}
                   updateStatusLabel={updateStatusLabel}
                   updateStatusTone={updateStatusTone}
+                  receivePrerelease={receivePrerelease}
+                  savingUpdatePreferences={savingUpdatePreferences}
                   onCheckUpdate={onCheckUpdate}
                   onDownloadUpdate={onDownloadUpdate}
+                  onToggleReceivePrerelease={onToggleReceivePrerelease}
                 />
               </CardContent>
             </Card>

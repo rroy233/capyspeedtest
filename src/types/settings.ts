@@ -22,6 +22,10 @@ export interface ClientUpdateStatus {
   release_notes: string;
 }
 
+export interface UpdatePreferences {
+  receive_prerelease: boolean;
+}
+
 export interface ClientUpdateDownloadResult {
   version: string;
   package_path: string;
@@ -33,6 +37,7 @@ export interface SettingsSnapshot {
   kernel: KernelStatus;
   ip_database: IpDatabaseStatus;
   client_update: ClientUpdateStatus;
+  update_preferences: UpdatePreferences;
 }
 
 export interface KernelGeoIpCheckResult {

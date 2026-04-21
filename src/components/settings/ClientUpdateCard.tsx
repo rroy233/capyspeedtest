@@ -1,5 +1,5 @@
 import type { ClientUpdateStatus, UpdateCheckProgressEvent, UpdateDownloadProgressEvent } from "../../types/settings";
-import { Button, Chip, Surface, ProgressBar } from "@heroui/react";
+import { Button, Chip, Surface, ProgressBar, Switch } from "@heroui/react";
 
 interface ClientUpdateCardProps {
   snapshot: ClientUpdateStatus;
@@ -10,8 +10,11 @@ interface ClientUpdateCardProps {
   isDownloadingUpdate: boolean;
   updateStatusLabel: string;
   updateStatusTone: "warning" | "success" | "danger";
+  receivePrerelease: boolean;
+  savingUpdatePreferences: boolean;
   onCheckUpdate: () => void;
   onDownloadUpdate: () => void;
+  onToggleReceivePrerelease: (selected: boolean) => void;
 }
 
 export function ClientUpdateCard({
@@ -23,8 +26,11 @@ export function ClientUpdateCard({
   isDownloadingUpdate,
   updateStatusLabel,
   updateStatusTone,
+  receivePrerelease,
+  savingUpdatePreferences,
   onCheckUpdate,
   onDownloadUpdate,
+  onToggleReceivePrerelease,
 }: ClientUpdateCardProps) {
   return (
     <Surface variant="secondary" className="p-4">
@@ -84,6 +90,19 @@ export function ClientUpdateCard({
         >
           一键安装并重启
         </Button>
+      </div>
+
+      <div className="mt-3 border-t border-divider pt-3">
+        <Switch
+          isSelected={receivePrerelease}
+          isDisabled={!snapshotReady || savingUpdatePreferences || loadingUpdate}
+          onChange={onToggleReceivePrerelease}
+        >
+          <Switch.Control>
+            <Switch.Thumb />
+          </Switch.Control>
+          <Switch.Content>接收预发布版本（beta）</Switch.Content>
+        </Switch>
       </div>
     </Surface>
   );
