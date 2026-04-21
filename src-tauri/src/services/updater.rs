@@ -179,25 +179,38 @@ fn select_release_asset(release: &GitHubRelease) -> Option<&GitHubAsset> {
 }
 
 /// 比较两个语义化版本号。返回正数 if left > right。
+/// 遵循 semver 2.0.0 规范：major.minor.patch 数值比较优先，
+/// 若基版本相同，有 prerelease 的版本视为更小。
 fn compare_versions(left: &str, right: &str) -> i32 {
-    let normalize = |v: &str| -> Vec<u32> {
-        v.trim_start_matches('v')
-            .split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect()
-    };
-    let left_parts = normalize(left);
-    let right_parts = normalize(right);
-    let max_len = left_parts.len().max(right_parts.len());
+    let left_v = Version::parse(left.trim_start_matches('v'));
+    let right_v = Version::parse(right.trim_start_matches('v'));
 
-    for i in 0..max_len {
-        let l = left_parts.get(i).copied().unwrap_or(0);
-        let r = right_parts.get(i).copied().unwrap_or(0);
-        if l != r {
-            return l as i32 - r as i32;
+    match (left_v, right_v) {
+        (Ok(l), Ok(r)) => l.cmp(&r) as i32,
+        // Fallback: custom numeric comparison for non-semver strings
+        _ => {
+            let left_nums: Vec<u32> = left
+                .trim_start_matches('v')
+                .split('.')
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            let right_nums: Vec<u32> = right
+                .trim_start_matches('v')
+                .split('.')
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            let max_len = left_nums.len().max(right_nums.len());
+
+            for i in 0..max_len {
+                let l = left_nums.get(i).copied().unwrap_or(0);
+                let r = right_nums.get(i).copied().unwrap_or(0);
+                if l != r {
+                    return l as i32 - r as i32;
+                }
+            }
+            0
         }
     }
-    0
 }
 
 /// 返回客户端更新包保存路径。
@@ -346,4 +359,324 @@ fn verify_sha256_file(path: &std::path::Path, expected_sha256: &str) -> Result<(
         ));
     }
     Ok(())
+}
+
+// =============================================================================
+// Unit tests
+// =============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // normalize_semver
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_normalize_semver_with_v_prefix() {
+        assert_eq!(normalize_semver("v1.2.3").unwrap(), Version::new(1, 2, 3));
+    }
+
+    #[test]
+    fn test_normalize_semver_without_v_prefix() {
+        assert_eq!(normalize_semver("2.0.0").unwrap(), Version::new(2, 0, 0));
+    }
+
+    #[test]
+    fn test_normalize_semver_invalid() {
+        assert!(normalize_semver("not-a-version").is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // compare_versions
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_compare_versions_newer() {
+        assert!(compare_versions("1.2.3", "1.2.0") > 0);
+        assert!(compare_versions("2.0.0", "1.9.9") > 0);
+        assert!(compare_versions("1.0.1", "1.0.0") > 0);
+    }
+
+    #[test]
+    fn test_compare_versions_older() {
+        assert!(compare_versions("1.2.0", "1.2.3") < 0);
+        assert!(compare_versions("1.9.9", "2.0.0") < 0);
+    }
+
+    #[test]
+    fn test_compare_versions_equal() {
+        assert_eq!(compare_versions("1.2.3", "1.2.3"), 0);
+        assert_eq!(compare_versions("v1.0.0", "1.0.0"), 0);
+    }
+
+    #[test]
+    fn test_compare_versions_different_lengths() {
+        assert!(compare_versions("1.2.3.4", "1.2.3") > 0);
+        assert!(compare_versions("1.2.3", "1.2.3.4") < 0);
+    }
+
+    #[test]
+    fn test_compare_versions_ignores_v_prefix() {
+        assert_eq!(compare_versions("v1.0.0", "1.0.0"), 0);
+        assert!(compare_versions("v2.0.0", "1.0.0") > 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // compare_versions — prerelease
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_compare_versions_prerelease_vs_stable() {
+        // prerelease 版本视为更低（semver 规范）
+        assert!(compare_versions("v1.0.1", "v1.0.1-beta1") > 0);
+        assert!(compare_versions("v1.0.1-beta1", "v1.0.1") < 0);
+        assert!(compare_versions("v2.0.0", "v2.0.0-rc1") > 0);
+        assert!(compare_versions("v2.0.0-rc1", "v2.0.0") < 0);
+    }
+
+    #[test]
+    fn test_compare_versions_prerelease_between_themselves() {
+        // alpha < beta < rc < stable
+        assert!(compare_versions("v1.0.0-beta1", "v1.0.0-alpha") > 0);
+        assert!(compare_versions("v1.0.0-rc1", "v1.0.0-beta1") > 0);
+        assert!(compare_versions("v1.0.0-beta2", "v1.0.0-beta1") > 0);
+    }
+
+    #[test]
+    fn test_compare_versions_prerelease_different_lengths() {
+        assert!(compare_versions("v1.0.0-beta.1", "v1.0.0-beta") > 0);
+        assert!(compare_versions("v1.0.0-alpha.1.2.3", "v1.0.0-alpha.1") > 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // normalize_semver — prerelease
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_normalize_semver_prerelease() {
+        // normalize_semver 使用 Version::parse，保留 prerelease 标签
+        let v1 = normalize_semver("v1.0.1-beta1").unwrap();
+        assert_eq!((v1.major, v1.minor, v1.patch), (1, 0, 1));
+        assert_eq!(v1.pre.as_str(), "beta1");
+
+        let v2 = normalize_semver("v2.0.0-rc1").unwrap();
+        assert_eq!((v2.major, v2.minor, v2.patch), (2, 0, 0));
+        assert_eq!(v2.pre.as_str(), "rc1");
+
+        let v3 = normalize_semver("v3.0.0-alpha.2").unwrap();
+        assert_eq!((v3.major, v3.minor, v3.patch), (3, 0, 0));
+        assert_eq!(v3.pre.as_str(), "alpha.2");
+    }
+
+    #[test]
+    fn test_normalize_semver_prerelease_with_build() {
+        // prerelease + build metadata: 1.0.0-beta+build123
+        let v = normalize_semver("v1.0.0-beta+build123").unwrap();
+        assert_eq!((v.major, v.minor, v.patch), (1, 0, 0));
+        assert_eq!(v.pre.as_str(), "beta");
+        assert_eq!(v.build.as_str(), "build123");
+    }
+
+    // -------------------------------------------------------------------------
+    // select_latest_semver_release — prerelease
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_select_latest_semver_release_stable_beats_prerelease() {
+        // semver::Version 认定 v2.0.0 > v2.0.0-beta regardless of prerelease tag
+        let releases = vec![
+            make_release("v2.0.0-beta", false),
+            make_release("v2.0.0", false),
+        ];
+        let result = select_latest_semver_release(&releases).unwrap();
+        assert_eq!(result.tag_name, "v2.0.0");
+    }
+
+    // -------------------------------------------------------------------------
+    // select_latest_semver_release
+    // -------------------------------------------------------------------------
+    fn make_release(tag: &str, draft: bool) -> GitHubRelease {
+        GitHubRelease {
+            tag_name: tag.to_string(),
+            html_url: "https://github.com/test/test".to_string(),
+            body: None,
+            assets: vec![],
+            draft,
+        }
+    }
+
+    #[test]
+    fn test_select_latest_semver_release_picks_highest() {
+        let releases = vec![
+            make_release("v1.0.0", false),
+            make_release("v2.0.0", false),
+            make_release("v1.5.0", false),
+        ];
+        let result = select_latest_semver_release(&releases).unwrap();
+        assert_eq!(result.tag_name, "v2.0.0");
+    }
+
+    #[test]
+    fn test_select_latest_semver_release_skips_draft() {
+        let releases = vec![make_release("v3.0.0", true), make_release("v2.0.0", false)];
+        let result = select_latest_semver_release(&releases).unwrap();
+        assert_eq!(result.tag_name, "v2.0.0");
+    }
+
+    #[test]
+    fn test_select_latest_semver_release_skips_invalid() {
+        let releases = vec![
+            make_release("not-semver", false),
+            make_release("v2.0.0", false),
+        ];
+        let result = select_latest_semver_release(&releases).unwrap();
+        assert_eq!(result.tag_name, "v2.0.0");
+    }
+
+    #[test]
+    fn test_select_latest_semver_release_empty() {
+        let releases: Vec<GitHubRelease> = vec![];
+        assert!(select_latest_semver_release(&releases).is_err());
+    }
+
+    #[test]
+    fn test_select_latest_semver_release_all_drafts() {
+        let releases = vec![make_release("v3.0.0", true), make_release("v2.0.0", true)];
+        assert!(select_latest_semver_release(&releases).is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // select_release_asset — Windows
+    // -------------------------------------------------------------------------
+    #[cfg(target_os = "windows")]
+    mod windows_asset_tests {
+        use super::*;
+
+        fn windows_asset(name: &str) -> GitHubAsset {
+            GitHubAsset {
+                name: name.to_string(),
+                browser_download_url: format!("https://example.com/{}", name),
+            }
+        }
+
+        fn release_with_assets(names: &[&str]) -> GitHubRelease {
+            GitHubRelease {
+                tag_name: "v1.0.0".to_string(),
+                html_url: "https://github.com/test/test".to_string(),
+                body: None,
+                assets: names.iter().map(|n| windows_asset(n)).collect(),
+                draft: false,
+            }
+        }
+
+        #[test]
+        fn test_windows_prefers_msi() {
+            let release = release_with_assets(&[
+                "capyspeedtest_windows_x64.exe",
+                "capyspeedtest_windows_x64.msi",
+            ]);
+            let asset = select_release_asset(&release).unwrap();
+            assert!(asset.name.ends_with(".msi"));
+        }
+
+        #[test]
+        fn test_windows_falls_back_to_exe() {
+            let release = release_with_assets(&["capyspeedtest_windows_x64.exe"]);
+            let asset = select_release_asset(&release).unwrap();
+            assert!(asset.name.ends_with(".exe"));
+        }
+
+        #[test]
+        fn test_windows_falls_back_to_first() {
+            let release = release_with_assets(&["capyspeedtest_linux_x64"]);
+            let asset = select_release_asset(&release).unwrap();
+            assert_eq!(asset.name, "capyspeedtest_linux_x64");
+        }
+
+        #[test]
+        fn test_windows_empty_assets() {
+            let release = release_with_assets(&[]);
+            assert!(select_release_asset(&release).is_none());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // select_release_asset — Linux
+    // -------------------------------------------------------------------------
+    #[cfg(target_os = "linux")]
+    mod linux_asset_tests {
+        use super::*;
+
+        fn linux_asset(name: &str) -> GitHubAsset {
+            GitHubAsset {
+                name: name.to_string(),
+                browser_download_url: format!("https://example.com/{}", name),
+            }
+        }
+
+        fn release_with_assets(names: &[&str]) -> GitHubRelease {
+            GitHubRelease {
+                tag_name: "v1.0.0".to_string(),
+                html_url: "https://github.com/test/test".to_string(),
+                body: None,
+                assets: names.iter().map(|n| linux_asset(n)).collect(),
+                draft: false,
+            }
+        }
+
+        #[test]
+        fn test_linux_prefers_arch_specific_appimage() {
+            let release = release_with_assets(&[
+                "capyspeedtest_linux_x86_64.deb",
+                "capyspeedtest_linux_x86_64.appimage",
+            ]);
+            let asset = select_release_asset(&release).unwrap();
+            assert!(asset.name.contains("appimage"));
+        }
+
+        #[test]
+        fn test_linux_falls_back_to_deb() {
+            let release = release_with_assets(&["capyspeedtest_linux_x86_64.deb"]);
+            let asset = select_release_asset(&release).unwrap();
+            assert!(asset.name.contains("deb"));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // select_release_asset — macOS
+    // -------------------------------------------------------------------------
+    #[cfg(target_os = "macos")]
+    mod macos_asset_tests {
+        use super::*;
+
+        fn macos_asset(name: &str) -> GitHubAsset {
+            GitHubAsset {
+                name: name.to_string(),
+                browser_download_url: format!("https://example.com/{}", name),
+            }
+        }
+
+        fn release_with_assets(names: &[&str]) -> GitHubRelease {
+            GitHubRelease {
+                tag_name: "v1.0.0".to_string(),
+                html_url: "https://github.com/test/test".to_string(),
+                body: None,
+                assets: names.iter().map(|n| macos_asset(n)).collect(),
+                draft: false,
+            }
+        }
+
+        #[test]
+        fn test_macos_prefers_applesilicon() {
+            let release = release_with_assets(&[
+                "capyspeedtest_macos_intel",
+                "capyspeedtest_macos_applesilicon",
+            ]);
+            let asset = select_release_asset(&release).unwrap();
+            assert!(asset.name.contains("applesilicon"));
+        }
+
+        #[test]
+        fn test_macos_falls_back_to_intel() {
+            let release = release_with_assets(&["capyspeedtest_macos_intel"]);
+            let asset = select_release_asset(&release).unwrap();
+            assert!(asset.name.contains("intel"));
+        }
+    }
 }

@@ -526,3 +526,39 @@ pub async fn set_update_preferences(
 
     Ok(UpdatePreferences { receive_prerelease })
 }
+
+// =============================================================================
+// Unit tests
+// =============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // is_prerelease_version
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_is_prerelease_version_true() {
+        assert!(is_prerelease_version("v1.0.1-beta1"));
+        assert!(is_prerelease_version("2.0.0-rc1"));
+        assert!(is_prerelease_version("v1.0.0-alpha"));
+        assert!(is_prerelease_version("3.0.0-beta.2"));
+        assert!(is_prerelease_version("1.2.3-rc"));
+        assert!(is_prerelease_version("v0.0.1-pre"));
+    }
+
+    #[test]
+    fn test_is_prerelease_version_false() {
+        assert!(!is_prerelease_version("v1.0.0"));
+        assert!(!is_prerelease_version("1.0.0"));
+        assert!(!is_prerelease_version("2.0.0"));
+        assert!(!is_prerelease_version("1.0.0.0"));
+        assert!(!is_prerelease_version("10.20.30"));
+    }
+
+    #[test]
+    fn test_is_prerelease_version_edge_cases() {
+        assert!(!is_prerelease_version("v1.0.0"));
+        assert!(!is_prerelease_version(""));
+    }
+}
