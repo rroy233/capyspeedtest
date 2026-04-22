@@ -1,4 +1,11 @@
-import type { NodeFilter, NodeTestState, SpeedTestProgressEvent, SpeedTestResult, SpeedTestTaskConfig } from "../types/speedtest";
+import type {
+  NodeFilter,
+  NodeTestState,
+  SpeedTestProgressEvent,
+  SpeedTestResult,
+  SpeedTestTaskConfig,
+  SpeedtestDownloadSource,
+} from "../types/speedtest";
 import type { KernelDownloadProgressEvent } from "../types/speedtest";
 import { invokeTauri, asNumberOrUndefined, asStringOrUndefined, asBooleanOrUndefined } from "./helpers";
 
@@ -43,6 +50,18 @@ export async function clearSpeedtestCheckpoint(): Promise<void> {
 
 export async function resumeSpeedtestFromCheckpoint(): Promise<SpeedTestResult[]> {
   return invokeTauri<SpeedTestResult[]>("resume_speedtest_from_checkpoint", {});
+}
+
+export async function getSpeedtestPreferences(): Promise<{ download_source: SpeedtestDownloadSource }> {
+  return invokeTauri<{ download_source: SpeedtestDownloadSource }>("get_speedtest_preferences", {});
+}
+
+export async function setSpeedtestDownloadSource(
+  downloadSource: SpeedtestDownloadSource
+): Promise<{ download_source: SpeedtestDownloadSource }> {
+  return invokeTauri<{ download_source: SpeedtestDownloadSource }>("set_speedtest_download_source", {
+    downloadSource,
+  });
 }
 
 export async function listenSpeedTestProgress(

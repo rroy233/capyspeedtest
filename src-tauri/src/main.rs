@@ -81,9 +81,11 @@ fn main() {
         .manage(commands::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings_snapshot,
+            commands::get_speedtest_preferences,
             commands::list_kernel_versions_cmd,
             commands::select_kernel_version,
             commands::refresh_ip_database,
+            commands::set_speedtest_download_source,
             commands::parse_subscription_nodes,
             commands::fetch_subscription_from_url,
             commands::check_kernel_geoip_updates,

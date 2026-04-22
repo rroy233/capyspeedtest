@@ -27,6 +27,8 @@ export interface SpeedTestTaskConfig {
   timeout_ms: number;
 }
 
+export type SpeedtestDownloadSource = "tele2" | "cloudflare";
+
 export interface SpeedTestResult {
   node: NodeInfo;
   tcp_ping_ms: number;

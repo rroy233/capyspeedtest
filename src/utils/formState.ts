@@ -44,6 +44,7 @@ export interface SpeedTestFormState {
   targetSites: string;
   enableUploadTest: boolean;
   timeoutMs: string;
+  downloadSource?: "tele2" | "cloudflare";
 }
 
 export function getFormState(): SpeedTestFormState | null {

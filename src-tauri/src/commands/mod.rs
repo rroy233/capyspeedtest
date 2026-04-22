@@ -45,6 +45,7 @@ pub struct AppState {
     pub client_update_last_checked_at: Mutex<String>,
     pub client_update_cache: Mutex<Option<crate::models::ClientUpdateStatus>>,
     pub receive_prerelease_updates: Mutex<bool>,
+    pub speedtest_download_source: Mutex<String>,
 }
 
 impl Default for AppState {
@@ -61,6 +62,7 @@ impl Default for AppState {
             client_update_last_checked_at: Mutex::new(runtime_state.client_update_last_checked_at),
             client_update_cache: Mutex::new(runtime_state.client_update_cache),
             receive_prerelease_updates: Mutex::new(runtime_state.receive_prerelease_updates),
+            speedtest_download_source: Mutex::new(runtime_state.speedtest_download_source),
         }
     }
 }

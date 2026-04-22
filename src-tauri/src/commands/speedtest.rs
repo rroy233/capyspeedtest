@@ -109,6 +109,7 @@ pub async fn run_speedtest_batch(
         .join("\n");
 
     let task_config = config.unwrap_or_default();
+    let download_source = state.speedtest_download_source.lock().unwrap().clone();
 
     let kernel_path = resolve_kernel_path(&window, &state).await?;
 
@@ -118,6 +119,7 @@ pub async fn run_speedtest_batch(
         filtered_nodes,
         &checkpoint_raw_input,
         &task_config,
+        &download_source,
         kernel_path,
         0,
         Vec::new(),
@@ -183,6 +185,7 @@ pub async fn resume_speedtest_from_checkpoint(
     }
 
     let task_config = checkpoint.config.clone().unwrap_or_default();
+    let download_source = state.speedtest_download_source.lock().unwrap().clone();
 
     if resume_from >= total {
         if let Err(e) = services::speedtest::persist_speedtest_history(&task_config, &seed_results)
@@ -205,6 +208,7 @@ pub async fn resume_speedtest_from_checkpoint(
         nodes,
         &checkpoint.raw_input,
         &task_config,
+        &download_source,
         kernel_path,
         resume_from,
         seed_results,

@@ -39,6 +39,12 @@ pub struct UpdatePreferences {
     pub receive_prerelease: bool,
 }
 
+/// 测速偏好配置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SpeedtestPreferences {
+    pub download_source: String,
+}
+
 /// 客户端更新包下载结果。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClientUpdateDownloadResult {

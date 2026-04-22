@@ -3,7 +3,8 @@
 use crate::commands::{runtime_app_version, AppState};
 use crate::models::{
     GeoIpDownloadProgressEvent, IpDatabaseStatus, KernelDownloadProgressEvent,
-    KernelListProgressEvent, KernelStatus, SettingsSnapshot, UpdatePreferences,
+    KernelListProgressEvent, KernelStatus, SettingsSnapshot, SpeedtestPreferences,
+    UpdatePreferences,
 };
 use crate::services;
 use tauri::Emitter;
@@ -318,5 +319,43 @@ pub async fn refresh_ip_database(
         current_exists: true,
         latest_version: services::latest_ip_database_version(),
         last_checked_at: checked_at,
+    })
+}
+
+/// 获取测速偏好（下载测速源）。
+#[tauri::command]
+pub fn get_speedtest_preferences(
+    state: tauri::State<'_, AppState>,
+) -> Result<SpeedtestPreferences, String> {
+    let source = state.speedtest_download_source.lock().unwrap().clone();
+    Ok(SpeedtestPreferences {
+        download_source: services::speedtest::normalize_download_source(&source).to_string(),
+    })
+}
+
+/// 设置下载测速源并持久化。
+#[tauri::command]
+pub async fn set_speedtest_download_source(
+    state: tauri::State<'_, AppState>,
+    download_source: String,
+) -> Result<SpeedtestPreferences, String> {
+    let normalized = services::speedtest::normalize_download_source(&download_source).to_string();
+    {
+        let mut guard = state.speedtest_download_source.lock().unwrap();
+        *guard = normalized.clone();
+    }
+
+    let persisted_source = normalized.clone();
+    tokio::task::spawn_blocking(move || {
+        services::update_persisted_state(move |persisted| {
+            persisted.speedtest_download_source = persisted_source;
+        })
+    })
+    .await
+    .map_err(|e| format!("保存测速偏好失败: {e}"))?
+    .map_err(|e| format!("保存测速偏好失败: {e}"))?;
+
+    Ok(SpeedtestPreferences {
+        download_source: normalized,
     })
 }

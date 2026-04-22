@@ -9,6 +9,52 @@ use std::thread;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{lookup_host, TcpStream};
 
+pub const DOWNLOAD_SOURCE_TELE2: &str = "tele2";
+pub const DOWNLOAD_SOURCE_CLOUDFLARE: &str = "cloudflare";
+pub const TELE2_DOWNLOAD_URL: &str = "http://speedtest.tele2.net/10MB.zip";
+pub const CLOUDFLARE_DOWNLOAD_URL: &str =
+    "https://speed.cloudflare.com/__down?bytes=25000000";
+static NOCACHE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn normalize_download_source(source: &str) -> &'static str {
+    match source.trim().to_ascii_lowercase().as_str() {
+        DOWNLOAD_SOURCE_TELE2 => DOWNLOAD_SOURCE_TELE2,
+        _ => DOWNLOAD_SOURCE_CLOUDFLARE,
+    }
+}
+
+pub fn download_url_for_source(source: &str) -> &'static str {
+    match normalize_download_source(source) {
+        DOWNLOAD_SOURCE_TELE2 => TELE2_DOWNLOAD_URL,
+        _ => CLOUDFLARE_DOWNLOAD_URL,
+    }
+}
+
+fn should_use_dynamic_nocache(parsed: &url::Url) -> bool {
+    parsed
+        .host_str()
+        .map(|host| host.eq_ignore_ascii_case("speed.cloudflare.com"))
+        .unwrap_or(false)
+        && parsed.path() == "/__down"
+}
+
+fn next_nocache_value() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let seq = NOCACHE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("0.{}{}", nanos, seq)
+}
+
+fn with_dynamic_nocache(base: &url::Url) -> String {
+    let mut updated = base.clone();
+    updated
+        .query_pairs_mut()
+        .append_pair("nocache", &next_nocache_value());
+    updated.to_string()
+}
+
 async fn connect_socks5(
     proxy_url: &str,
     target_host: &str,
@@ -631,6 +677,7 @@ pub fn normalize_speedtest_config(config: &SpeedTestTaskConfig) -> SpeedTestTask
 pub async fn test_node(
     node: &NodeInfo,
     config: &SpeedTestTaskConfig,
+    download_source: &str,
     socks_proxy: Option<&str>,
     progress_callback: Option<Arc<SpeedTestProgressCallback>>,
 ) -> Result<SpeedTestResult, String> {
@@ -697,8 +744,9 @@ pub async fn test_node(
         cb(RealtimeMetric::Stage(SpeedTestStage::Downloading));
     }
     let (avg_download_mbps, max_download_mbps) = if !config.target_sites.is_empty() {
+        let download_url = download_url_for_source(download_source);
         do_download_test(
-            &config.target_sites[0],
+            download_url,
             socks_proxy,
             config.concurrency as usize,
             config.timeout_ms,
@@ -1118,106 +1166,172 @@ async fn do_download_test(
     timeout_ms: u64,
     progress_callback: Option<Arc<SpeedTestProgressCallback>>,
 ) -> Result<(f32, f32), String> {
-    let test_host = "speedtest.tele2.net";
-    let test_port = 80;
-    let path = "/10MB.zip";
+    let normalized_url = if url.starts_with("http://") || url.starts_with("https://") {
+        url.to_string()
+    } else {
+        format!("http://{}", url)
+    };
+    let parsed = url::Url::parse(&normalized_url).map_err(|e| format!("下载URL无效: {}", e))?;
+    let scheme = parsed.scheme().to_ascii_lowercase();
+    let test_host = parsed
+        .host_str()
+        .ok_or_else(|| "下载URL缺少主机名".to_string())?
+        .to_string();
+    let path = match parsed.query() {
+        Some(query) => format!("{}?{}", parsed.path(), query),
+        None => parsed.path().to_string(),
+    };
+    let test_port = parsed
+        .port()
+        .unwrap_or(if scheme == "https" { 443 } else { 80 });
+    let dynamic_nocache = should_use_dynamic_nocache(&parsed);
 
     info!(
-        "[下载测速] 目标: {}{}, SOCKS5: {:?}",
-        test_host, path, socks_proxy
+        "[下载测速] 目标URL: {}, host={}, port={}, scheme={}, dynamic_nocache={}, SOCKS5={:?}",
+        normalized_url, test_host, test_port, scheme, dynamic_nocache, socks_proxy
     );
 
     let start = Instant::now();
     let total_bytes = Arc::new(AtomicU64::new(0));
     let timeout_duration = Duration::from_millis(timeout_ms);
 
-    // 并发下载线程
-    let handles: Vec<_> = (0..concurrency)
-        .map(|_| {
-            let bytes = total_bytes.clone();
-            let test_host = test_host.to_string();
-            let path = path.to_string();
-            let proxy_url = socks_proxy.map(String::from);
-
-            tokio::spawn(async move {
-                let _ = tokio::time::timeout(timeout_duration, async move {
-                    let mut stream = if let Some(proxy) = proxy_url {
-                        info!("[下载测速] 线程正在通过 SOCKS5 代理连接 {}:{}", test_host, test_port);
-                        match connect_socks5(&proxy, &test_host, test_port).await {
-                            Ok(s) => {
-                                info!("[下载测速] SOCKS5 连接成功!");
-                                s
-                            }
-                            Err(e) => {
-                                warn!("[下载测速] SOCKS5 连接失败: {}", e);
-                                return;
-                            }
-                        }
-                    } else {
-                        match tokio::net::lookup_host((test_host.as_str(), test_port)).await {
-                            Ok(mut addrs) => {
-                                if let Some(addr) = addrs.next() {
-                                    match tokio::net::TcpStream::connect(addr).await {
-                                        Ok(s) => s,
-                                        _ => return,
-                                    }
-                                } else { return; }
-                            }
-                            _ => return,
-                        }
-                    };
-
-                    info!("[下载测速] 发送 HTTP 请求...");
-                    let request = format!(
-                        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n",
-                        path, test_host
-                    );
-                    info!("[下载测速] 请求内容: {}", request.replace("\r\n", "\\r\\n"));
-
-                    if stream.write_all(request.as_bytes()).await.is_err() {
-                        warn!("[下载测速] 发送请求失败");
-                        return;
-                    }
-                    info!("[下载测速] 请求已发送，等待响应...");
-
-                    let mut buf = [0u8; 8192];
-                    let mut headers_found = false;
-                    let mut total_received = 0u64;
-
-                    loop {
-                        match stream.read(&mut buf).await {
-                            Ok(0) => {
-                                info!("[下载测速] 连接关闭, 总计收到 {} 字节", total_received);
-                                break;
-                            }
-                            Ok(n) => {
-                                total_received += n as u64;
-                                if !headers_found {
-                                    let content = String::from_utf8_lossy(&buf[..n]);
-                                    info!("[下载测速] 收到 {} 字节 (总计 {}), headers_found={}", n, total_received, headers_found);
-                                    if let Some(idx) = content.find("\r\n\r\n") {
-                                        headers_found = true;
-                                        info!("[下载测速] 找到 HTTP 头");
-                                        // Ignore the headers, count the body bytes
-                                        let body_bytes = n - (idx + 4);
-                                        if body_bytes > 0 {
-                                            bytes.fetch_add(body_bytes as u64, Ordering::Relaxed);
-                                        }
-                                    }
-                                } else {
-                                    bytes.fetch_add(n as u64, Ordering::Relaxed);
+    let handles: Vec<_> = if scheme == "http" {
+        (0..concurrency)
+            .map(|_| {
+                let bytes = total_bytes.clone();
+                let test_host = test_host.clone();
+                let path = path.clone();
+                let parsed = parsed.clone();
+                let dynamic_nocache = dynamic_nocache;
+                let proxy_url = socks_proxy.map(String::from);
+                tokio::spawn(async move {
+                    let _ = tokio::time::timeout(timeout_duration, async move {
+                        let mut stream = if let Some(proxy) = proxy_url {
+                            match connect_socks5(&proxy, &test_host, test_port).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    warn!("[下载测速] SOCKS5 连接失败: {}", e);
+                                    return;
                                 }
                             }
-                            Err(e) => {
-                                warn!("[下载测速] 读取错误: {}", e);
-                                break;
+                        } else {
+                            match tokio::net::lookup_host((test_host.as_str(), test_port)).await {
+                                Ok(mut addrs) => {
+                                    if let Some(addr) = addrs.next() {
+                                        match tokio::net::TcpStream::connect(addr).await {
+                                            Ok(s) => s,
+                                            Err(_) => return,
+                                        }
+                                    } else {
+                                        return;
+                                    }
+                                }
+                                Err(_) => return,
+                            }
+                        };
+
+                        let target_path = if dynamic_nocache {
+                            let dynamic_url = with_dynamic_nocache(&parsed);
+                            match url::Url::parse(&dynamic_url) {
+                                Ok(dynamic_parsed) => match dynamic_parsed.query() {
+                                    Some(query) => {
+                                        format!("{}?{}", dynamic_parsed.path(), query)
+                                    }
+                                    None => dynamic_parsed.path().to_string(),
+                                },
+                                Err(_) => path.clone(),
+                            }
+                        } else {
+                            path.clone()
+                        };
+
+                        let request = format!(
+                            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: CapySpeedtest/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+                            target_path, test_host
+                        );
+                        if stream.write_all(request.as_bytes()).await.is_err() {
+                            return;
+                        }
+
+                        let mut buf = [0u8; 8192];
+                        let mut headers_found = false;
+                        loop {
+                            match stream.read(&mut buf).await {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    if !headers_found {
+                                        let content = String::from_utf8_lossy(&buf[..n]);
+                                        if let Some(idx) = content.find("\r\n\r\n") {
+                                            headers_found = true;
+                                            let body_bytes = n.saturating_sub(idx + 4);
+                                            if body_bytes > 0 {
+                                                bytes.fetch_add(body_bytes as u64, Ordering::Relaxed);
+                                            }
+                                        }
+                                    } else {
+                                        bytes.fetch_add(n as u64, Ordering::Relaxed);
+                                    }
+                                }
+                                Err(_) => break,
                             }
                         }
-                    }
-                }).await;
+                    })
+                    .await;
+                })
             })
-        })
-        .collect();
+            .collect()
+    } else {
+        let mut client_builder = reqwest::Client::builder()
+            .connect_timeout(timeout_duration)
+            .timeout(timeout_duration)
+            .pool_max_idle_per_host(0)
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(proxy_url) = socks_proxy {
+            let proxy =
+                reqwest::Proxy::all(proxy_url).map_err(|e| format!("构建 SOCKS5 代理失败: {}", e))?;
+            client_builder = client_builder.proxy(proxy);
+        }
+        let client = client_builder
+            .build()
+            .map_err(|e| format!("创建下载测速客户端失败: {}", e))?;
+
+        (0..concurrency)
+            .map(|_| {
+                let bytes = total_bytes.clone();
+                let client = client.clone();
+                let request_url = normalized_url.clone();
+                let parsed = parsed.clone();
+                let dynamic_nocache = dynamic_nocache;
+                tokio::spawn(async move {
+                    let _ = tokio::time::timeout(timeout_duration, async move {
+                        while let Ok(response) = client
+                            .get(if dynamic_nocache {
+                                with_dynamic_nocache(&parsed)
+                            } else {
+                                request_url.clone()
+                            })
+                            .header(reqwest::header::USER_AGENT, "CapySpeedtest/1.0")
+                            .header(reqwest::header::ACCEPT, "*/*")
+                            .send()
+                            .await
+                        {
+                            let mut resp = response;
+                            loop {
+                                match resp.chunk().await {
+                                    Ok(Some(chunk)) => {
+                                        bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                                    }
+                                    Ok(None) => break,
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    })
+                    .await;
+                })
+            })
+            .collect()
+    };
 
     let mut max_mbps = 0.0f32;
     let check_interval = Duration::from_secs(1);
@@ -2044,6 +2158,7 @@ pub async fn run_batch_speedtest<F>(
     nodes: Vec<NodeInfo>,
     raw_input: &str,
     config: &SpeedTestTaskConfig,
+    download_source: &str,
     kernel_path: PathBuf,
     start_index: usize,
     existing_results: Vec<SpeedTestResult>,
@@ -2077,6 +2192,11 @@ where
     info!(
         "[测速] 开始批量测速, 共 {} 个节点, 并发={}, 超时={}ms, 上传测速={}",
         total, normalized.concurrency, normalized.timeout_ms, normalized.enable_upload_test
+    );
+    info!(
+        "[测速] 下载测速源: {} ({})",
+        normalize_download_source(download_source),
+        download_url_for_source(download_source)
     );
 
     // 获取应用数据目录用于存放 Mihomo 配置文件
@@ -2530,12 +2650,14 @@ where
         let node_clone = node.clone();
         let normalized_clone = normalized.clone();
         let socks_proxy_string = socks_proxy.clone();
+        let download_source_string = download_source.to_string();
 
         // 我们将测速任务放入异步 spawn 中，这样主循环可以不断处理进度 channel
         let mut test_task = tokio::spawn(async move {
             test_node(
                 &node_clone,
                 &normalized_clone,
+                &download_source_string,
                 Some(socks_proxy_string.as_str()),
                 progress_callback,
             )

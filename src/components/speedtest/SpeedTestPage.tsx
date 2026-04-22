@@ -1,7 +1,21 @@
 import { FormEvent, useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { runSpeedTestBatch, resumeSpeedtestFromCheckpoint } from "../../api/speedtest";
+import {
+  runSpeedTestBatch,
+  resumeSpeedtestFromCheckpoint,
+  getSpeedtestPreferences,
+  setSpeedtestDownloadSource,
+} from "../../api/speedtest";
 import { fetchSubscriptionNodesFromUrl, parseSubscriptionNodes } from "../../api/subscription";
-import type { CountrySpeedSummary, KernelDownloadProgressEvent, NodeInfo, NodeTestState, SpeedTestProgressEvent, SpeedTestResult, SpeedTestTaskConfig } from "../../types/speedtest";
+import type {
+  CountrySpeedSummary,
+  KernelDownloadProgressEvent,
+  NodeInfo,
+  NodeTestState,
+  SpeedTestProgressEvent,
+  SpeedTestResult,
+  SpeedTestTaskConfig,
+  SpeedtestDownloadSource,
+} from "../../types/speedtest";
 import { getFormState, saveFormState, type SpeedTestFormState } from "../../utils/formState";
 import { useAlert } from "../../contexts/AlertContext";
 import { useSpeedtestContext } from "../../contexts/SpeedtestContext";
@@ -42,6 +56,7 @@ export default function SpeedTestPage() {
   const [subscriptionText, setSubscriptionText] = useState(defaultSubscription);
   const [subscriptionUrl, setSubscriptionUrl] = useState("");
   const [concurrency, setConcurrency] = useState("4");
+  const [downloadSource, setDownloadSource] = useState<SpeedtestDownloadSource>("cloudflare");
   const [targetSites, setTargetSites] = useState("https://www.google.com,https://www.youtube.com");
   const [enableUploadTest, setEnableUploadTest] = useState(true);
   const [timeoutMs, setTimeoutMs] = useState("8000");
@@ -170,7 +185,26 @@ export default function SpeedTestPage() {
       setTargetSites(saved.targetSites);
       setEnableUploadTest(saved.enableUploadTest);
       setTimeoutMs(saved.timeoutMs);
+      if (saved.downloadSource) {
+        setDownloadSource(saved.downloadSource);
+      }
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const pref = await getSpeedtestPreferences();
+        if (cancelled) return;
+        setDownloadSource(pref.download_source);
+      } catch {
+        // ignore and keep local value
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // 防抖保存表单状态
@@ -181,6 +215,7 @@ export default function SpeedTestPage() {
         subscriptionText,
         subscriptionUrl,
         concurrency,
+        downloadSource,
         targetSites,
         enableUploadTest,
         timeoutMs,
@@ -188,7 +223,23 @@ export default function SpeedTestPage() {
       saveFormState(state);
     }, 500);
     return () => clearTimeout(timeoutId);
-  }, [inputMode, subscriptionText, subscriptionUrl, concurrency, targetSites, enableUploadTest, timeoutMs]);
+  }, [
+    inputMode,
+    subscriptionText,
+    subscriptionUrl,
+    concurrency,
+    downloadSource,
+    targetSites,
+    enableUploadTest,
+    timeoutMs,
+  ]);
+
+  const handleDownloadSourceChange = useCallback((value: SpeedtestDownloadSource) => {
+    setDownloadSource(value);
+    void setSpeedtestDownloadSource(value).catch((err) => {
+      setError(err instanceof Error ? err.message : "保存下载测速源失败");
+    });
+  }, []);
 
   // 切换到手动输入模式时，重置订阅链接流程状态
   useEffect(() => {
@@ -706,6 +757,8 @@ export default function SpeedTestPage() {
               setConcurrency={setConcurrency}
               timeoutMs={timeoutMs}
               setTimeoutMs={setTimeoutMs}
+              downloadSource={downloadSource}
+              setDownloadSource={handleDownloadSourceChange}
               targetSites={targetSites}
               setTargetSites={setTargetSites}
               enableUploadTest={enableUploadTest}

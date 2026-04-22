@@ -27,6 +27,12 @@ pub struct PersistedState {
     pub client_update_cache: Option<ClientUpdateStatus>,
     #[serde(default)]
     pub receive_prerelease_updates: bool,
+    #[serde(default = "default_speedtest_download_source")]
+    pub speedtest_download_source: String,
+}
+
+fn default_speedtest_download_source() -> String {
+    super::speedtest::DOWNLOAD_SOURCE_CLOUDFLARE.to_string()
 }
 
 impl Default for PersistedState {
@@ -44,6 +50,7 @@ impl Default for PersistedState {
             client_update_last_checked_at: "0".to_string(),
             client_update_cache: None,
             receive_prerelease_updates: false,
+            speedtest_download_source: default_speedtest_download_source(),
         }
     }
 }

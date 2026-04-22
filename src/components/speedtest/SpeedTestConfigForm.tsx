@@ -6,6 +6,8 @@ import {
   Input,
   TextArea,
   Checkbox,
+  Select,
+  ListBox,
 } from "@heroui/react";
 import type { NodeInfo } from "../../types/speedtest";
 import { NodeFilterPanel } from "./NodeFilterPanel";
@@ -22,6 +24,8 @@ interface SpeedTestConfigFormProps {
   setConcurrency: (value: string) => void;
   timeoutMs: string;
   setTimeoutMs: (value: string) => void;
+  downloadSource: "tele2" | "cloudflare";
+  setDownloadSource: (value: "tele2" | "cloudflare") => void;
   targetSites: string;
   setTargetSites: (value: string) => void;
   enableUploadTest: boolean;
@@ -52,6 +56,8 @@ export function SpeedTestConfigForm({
   setConcurrency,
   timeoutMs,
   setTimeoutMs,
+  downloadSource,
+  setDownloadSource,
   targetSites,
   setTargetSites,
   enableUploadTest,
@@ -141,6 +147,31 @@ export function SpeedTestConfigForm({
               onChange={(e) => setTimeoutMs(e.target.value)}
             />
           </TextField>
+
+          <Select
+            variant="secondary"
+            value={downloadSource}
+            onChange={(value) =>
+              setDownloadSource((value === "tele2" ? "tele2" : "cloudflare"))
+            }
+            className="w-full"
+          >
+            <Label>下载测速源</Label>
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox aria-label="下载测速源">
+                <ListBox.Item id="cloudflare" key="cloudflare" textValue="cloudflare">
+                  cloudflare（默认）
+                </ListBox.Item>
+                <ListBox.Item id="tele2" key="tele2" textValue="tele2">
+                  tele2
+                </ListBox.Item>
+              </ListBox>
+            </Select.Popover>
+          </Select>
 
           <TextField className="md:col-span-2">
             <Label>目标站点（逗号分隔）</Label>
