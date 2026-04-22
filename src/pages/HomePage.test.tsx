@@ -117,7 +117,7 @@ describe("HomePage", () => {
       </AlertProvider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "开始批量测速" }));
+    fireEvent.click(screen.getByRole("button", { name: /开始批量测速/ }));
 
     await waitFor(() => {
       expect(runSpeedTestBatchMock).toHaveBeenCalledTimes(1);
@@ -171,23 +171,23 @@ describe("HomePage", () => {
       </AlertProvider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "订阅链接" }));
+    fireEvent.click(screen.getByRole("button", { name: /订阅链接/ }));
     fireEvent.change(screen.getByPlaceholderText("https://example.com/subscription"), {
       target: { value: "https://example.com/subscription" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
     await waitFor(() => {
       expect(fetchSubscriptionNodesFromUrlMock).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole("button", { name: "开始批量测速" })).toBeInTheDocument();
     });
+    expect(await screen.findByRole("button", { name: /开始批量测速/ })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /正则.*筛选/ }));
     fireEvent.change(screen.getByPlaceholderText("例如: HK|JP|SG"), {
       target: { value: "/hk|jp/i" },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "开始批量测速" }));
+    fireEvent.click(screen.getByRole("button", { name: /开始批量测速/ }));
 
     await waitFor(() => {
       expect(parseSubscriptionNodesMock).toHaveBeenCalledWith(
@@ -220,21 +220,19 @@ describe("HomePage", () => {
       </AlertProvider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "订阅链接" }));
+    fireEvent.click(screen.getByRole("button", { name: /订阅链接/ }));
     fireEvent.change(screen.getByPlaceholderText("https://example.com/subscription"), {
       target: { value: "https://example.com/subscription" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "开始批量测速" })).toBeInTheDocument();
-    });
+    expect(await screen.findByRole("button", { name: /开始批量测速/ })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /正则.*筛选/ }));
     fireEvent.change(screen.getByPlaceholderText("例如: HK|JP|SG"), {
       target: { value: "/[hk/" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "开始批量测速" }));
+    fireEvent.click(screen.getByRole("button", { name: /开始批量测速/ }));
 
     await waitFor(() => {
       expect(screen.getAllByText(/无效正则表达式/).length).toBeGreaterThan(0);
@@ -273,17 +271,15 @@ describe("HomePage", () => {
       </AlertProvider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "订阅链接" }));
+    fireEvent.click(screen.getByRole("button", { name: /订阅链接/ }));
     fireEvent.change(screen.getByPlaceholderText("https://example.com/subscription"), {
       target: { value: "https://example.com/subscription" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    fireEvent.click(screen.getByRole("button", { name: /下一步/ }));
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "开始批量测速" })).toBeInTheDocument();
-    });
+    expect(await screen.findByRole("button", { name: /开始批量测速/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "按地区" }));
+    fireEvent.click(await screen.findByRole("button", { name: /按地区/ }));
 
     expect(screen.getByText("暂无待测速节点")).toBeInTheDocument();
     expect(screen.getAllByText((_, node) => node?.textContent?.includes("待测速 0 个节点") ?? false).length).toBeGreaterThan(0);

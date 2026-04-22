@@ -114,7 +114,7 @@ describe("SettingsPage", () => {
       expect(screen.getAllByText("v1.19.1").length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "一键安装并重启" }));
+    fireEvent.click(await screen.findByRole("button", { name: /一键安装并重启/ }));
 
     await waitFor(() => {
       expect(screen.getByText(/应用即将自动重启并应用新版本/)).toBeInTheDocument();
