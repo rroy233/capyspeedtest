@@ -2429,7 +2429,7 @@ where
         // 生成 Mihomo 配置文件
         info!("[测速] 生成 Mihomo 配置 YAML...");
         let config_path = config_dir.join(format!("node_{}.yaml", index));
-        let yaml_config = MihomoProcess::generate_config(&node, base_port, base_port + 1);
+        let yaml_config = MihomoProcess::generate_config_for_speedtest(&node, base_port, base_port + 1);
         info!("[测速] 生成的配置路径: {:?}", config_path);
         info!("[测速] YAML 配置内容:\n{}", yaml_config);
 

@@ -841,6 +841,38 @@ fn build_proxy_config(node: &crate::models::NodeInfo) -> String {
     }
 }
 
+fn force_skip_cert_verify(proxy_yaml: &str) -> String {
+    let mut value: serde_yaml::Value = match serde_yaml::from_str(proxy_yaml) {
+        Ok(v) => v,
+        Err(_) => return proxy_yaml.to_string(),
+    };
+
+    let Some(root) = value.as_mapping_mut() else {
+        return proxy_yaml.to_string();
+    };
+    let Some(proxies_value) = root.get_mut(serde_yaml::Value::String("proxies".to_string())) else {
+        return proxy_yaml.to_string();
+    };
+    let Some(proxies) = proxies_value.as_sequence_mut() else {
+        return proxy_yaml.to_string();
+    };
+    let Some(first_proxy) = proxies.first_mut() else {
+        return proxy_yaml.to_string();
+    };
+    let Some(first_proxy_map) = first_proxy.as_mapping_mut() else {
+        return proxy_yaml.to_string();
+    };
+
+    first_proxy_map.insert(
+        serde_yaml::Value::String("skip-cert-verify".to_string()),
+        serde_yaml::Value::Bool(true),
+    );
+
+    serde_yaml::to_string(&value)
+        .map(|yaml| yaml.trim_start_matches("---\n").to_string())
+        .unwrap_or_else(|_| proxy_yaml.to_string())
+}
+
 fn build_proxy_config_from_payload(node: &crate::models::NodeInfo) -> Option<String> {
     let payload = node.parsed_proxy_payload.as_ref()?;
     let mut value: serde_json::Value = serde_json::from_str(payload).ok()?;
@@ -1725,6 +1757,37 @@ rules:
         )
     }
 
+    /// 生成测速场景专用 Mihomo 配置。
+    /// 与普通配置相比：仅对测速节点强制关闭证书校验，避免 TLS 证书名不匹配导致无法连通。
+    pub fn generate_config_for_speedtest(
+        node: &crate::models::NodeInfo,
+        socks_port: u16,
+        api_port: u16,
+    ) -> String {
+        let proxy_config = force_skip_cert_verify(&build_proxy_config(node));
+        format!(
+            r#"port: 0
+socks-port: {}
+api-port: {}
+allow-lan: false
+mode: rule
+log-level: warning
+
+{}
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - "{}"
+
+rules:
+  - GEOIP,CN,DIRECT
+  - MATCH,proxy
+"#,
+            socks_port, api_port, proxy_config, node.name
+        )
+    }
+
     /// 启动 mihomo 进程，返回进程句柄。
     /// socks_port 和 api_port 必须为非零值，因为使用固定端口。
     /// 注意：此函数是同步的，但 spawn_mihomo_async 是异步版本，会正确处理阻塞调用。
@@ -2430,6 +2493,27 @@ mod tests {
                 "missing `{expected_b}` in {yaml}"
             );
         }
+    }
+
+    #[test]
+    fn generate_config_for_speedtest_强制关闭证书校验() {
+        let node = NodeInfo {
+            name: "测速-Trojan".to_string(),
+            protocol: "trojan".to_string(),
+            country: "TW".to_string(),
+            raw: "".to_string(),
+            parsed_proxy_payload: Some(
+                r#"{"name":"测速-Trojan","type":"trojan","server":"tw.example.com","port":443,"password":"p","sni":"tw.example.com","skip-cert-verify":false}"#
+                    .to_string(),
+            ),
+            connect_info: None,
+            test_file: None,
+            upload_target: None,
+        };
+
+        let yaml = MihomoProcess::generate_config_for_speedtest(&node, 10860, 10861);
+        assert!(yaml.contains("skip-cert-verify: true"));
+        assert!(!yaml.contains("skip-cert-verify: false"));
     }
 
     #[test]
