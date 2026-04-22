@@ -12,8 +12,7 @@ use tokio::net::{lookup_host, TcpStream};
 pub const DOWNLOAD_SOURCE_TELE2: &str = "tele2";
 pub const DOWNLOAD_SOURCE_CLOUDFLARE: &str = "cloudflare";
 pub const TELE2_DOWNLOAD_URL: &str = "http://speedtest.tele2.net/10MB.zip";
-pub const CLOUDFLARE_DOWNLOAD_URL: &str =
-    "https://speed.cloudflare.com/__down?bytes=25000000";
+pub const CLOUDFLARE_DOWNLOAD_URL: &str = "https://speed.cloudflare.com/__down?bytes=25000000";
 static NOCACHE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn normalize_download_source(source: &str) -> &'static str {
@@ -1287,8 +1286,8 @@ async fn do_download_test(
             .pool_max_idle_per_host(0)
             .redirect(reqwest::redirect::Policy::none());
         if let Some(proxy_url) = socks_proxy {
-            let proxy =
-                reqwest::Proxy::all(proxy_url).map_err(|e| format!("构建 SOCKS5 代理失败: {}", e))?;
+            let proxy = reqwest::Proxy::all(proxy_url)
+                .map_err(|e| format!("构建 SOCKS5 代理失败: {}", e))?;
             client_builder = client_builder.proxy(proxy);
         }
         let client = client_builder
@@ -2549,7 +2548,8 @@ where
         // 生成 Mihomo 配置文件
         info!("[测速] 生成 Mihomo 配置 YAML...");
         let config_path = config_dir.join(format!("node_{}.yaml", index));
-        let yaml_config = MihomoProcess::generate_config_for_speedtest(&node, base_port, base_port + 1);
+        let yaml_config =
+            MihomoProcess::generate_config_for_speedtest(&node, base_port, base_port + 1);
         info!("[测速] 生成的配置路径: {:?}", config_path);
         info!("[测速] YAML 配置内容:\n{}", yaml_config);
 

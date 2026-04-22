@@ -4,7 +4,7 @@ use serde_json::{json, Value as JsonValue};
 use url::Url;
 
 use super::super::types::ProxyPayload;
-use super::super::utils::{parse_share_name, parse_bool_like, put_non_empty_string, query_map};
+use super::super::utils::{parse_bool_like, parse_share_name, put_non_empty_string, query_map};
 
 /// 解析 Trojan URL
 /// 格式: trojan://pass@example.com:443?type=ws&path=%2Fws#t1
@@ -40,7 +40,11 @@ pub fn parse_trojan_line(raw: &str) -> Option<ProxyPayload> {
     if let Some(alpn) = query.get("alpn").filter(|v| !v.is_empty()) {
         payload.insert(
             "alpn".into(),
-            JsonValue::Array(alpn.split(',').map(|s| JsonValue::String(s.trim().to_string())).collect()),
+            JsonValue::Array(
+                alpn.split(',')
+                    .map(|s| JsonValue::String(s.trim().to_string()))
+                    .collect(),
+            ),
         );
     }
     let network = query

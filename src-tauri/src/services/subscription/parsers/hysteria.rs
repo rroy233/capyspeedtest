@@ -4,7 +4,9 @@ use serde_json::{json, Value as JsonValue};
 use url::Url;
 
 use super::super::types::ProxyPayload;
-use super::super::utils::{parse_share_name, parse_bool_like, put_non_empty_string, query_map, split_csv};
+use super::super::utils::{
+    parse_bool_like, parse_share_name, put_non_empty_string, query_map, split_csv,
+};
 
 /// 解析 Hysteria URL
 /// 格式: hysteria://example.com:443?peer=cdn.example.com&obfs=foo&auth=bar&up=10&down=20&insecure=1#hy

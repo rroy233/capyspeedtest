@@ -1,6 +1,6 @@
 //! Netch 格式解析器
 
-use serde_json::{Value as JsonValue};
+use serde_json::Value as JsonValue;
 
 use super::super::types::ProxyPayload;
 use super::super::utils::decode_base64_flexible;
@@ -33,10 +33,22 @@ pub fn parse_netch_line(raw: &str) -> Vec<ProxyPayload> {
     if let Some(servers) = server_array {
         for server_val in servers {
             let mut payload = ProxyPayload::new();
-            let server = server_val.get("Hostname").and_then(|v| v.as_str()).unwrap_or("");
-            let remarks = server_val.get("Remark").and_then(|v| v.as_str()).unwrap_or(server);
-            let port = server_val.get("Port").and_then(|v| v.as_u64()).unwrap_or(443) as u16;
-            let protocol_type = server_val.get("Type").and_then(|v| v.as_str()).unwrap_or("");
+            let server = server_val
+                .get("Hostname")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let remarks = server_val
+                .get("Remark")
+                .and_then(|v| v.as_str())
+                .unwrap_or(server);
+            let port = server_val
+                .get("Port")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(443) as u16;
+            let protocol_type = server_val
+                .get("Type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             payload.insert("name".into(), JsonValue::String(remarks.to_string()));
             payload.insert("server".into(), JsonValue::String(server.to_string()));
@@ -82,7 +94,10 @@ pub fn parse_netch_line(raw: &str) -> Vec<ProxyPayload> {
                     } else {
                         payload.insert("cipher".into(), JsonValue::String("auto".to_string()));
                     }
-                    let transprot = server_val.get("TransferProtocol").and_then(|v| v.as_str()).unwrap_or("tcp");
+                    let transprot = server_val
+                        .get("TransferProtocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tcp");
                     payload.insert("network".into(), JsonValue::String(transprot.to_string()));
                     payload.insert("udp".into(), JsonValue::Bool(true));
                 }

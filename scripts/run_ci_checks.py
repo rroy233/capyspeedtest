@@ -45,6 +45,7 @@ def run_backend() -> None:
     run_step("Backend: rustfmt --check", "cargo fmt --check --manifest-path src-tauri/Cargo.toml")
     run_step("Backend: clippy", "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings")
     run_step("Backend: tests", "cargo test --manifest-path src-tauri/Cargo.toml")
+    run_step("Cargo Fmt","cargo fmt --manifest-path src-tauri/Cargo.toml")
 
 
 def parse_args() -> argparse.Namespace:

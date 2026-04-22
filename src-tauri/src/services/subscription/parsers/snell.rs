@@ -1,10 +1,12 @@
 //! Snell 协议解析器
 
-use serde_json::{Value as JsonValue};
+use serde_json::Value as JsonValue;
 use url::Url;
 
 use super::super::types::ProxyPayload;
-use super::super::utils::{extract_userinfo_from_raw, parse_share_name, put_non_empty_string, query_map};
+use super::super::utils::{
+    extract_userinfo_from_raw, parse_share_name, put_non_empty_string, query_map,
+};
 
 /// 解析 Snell URL
 /// 格式: snell://[version]:[password]@[server]:[port] 或 snell://[password]@[server]:[port] (默认 v2)

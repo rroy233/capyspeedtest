@@ -1,6 +1,6 @@
 //! SOCKS/HTTP 代理协议解析器
 
-use serde_json::{Value as JsonValue};
+use serde_json::Value as JsonValue;
 use url::Url;
 
 use super::super::types::ProxyPayload;

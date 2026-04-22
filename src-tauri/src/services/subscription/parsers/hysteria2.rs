@@ -4,7 +4,10 @@ use serde_json::{json, Value as JsonValue};
 use url::Url;
 
 use super::super::types::ProxyPayload;
-use super::super::utils::{extract_userinfo_from_raw, parse_share_name, parse_bool_like, put_non_empty_string, query_map, split_csv};
+use super::super::utils::{
+    extract_userinfo_from_raw, parse_bool_like, parse_share_name, put_non_empty_string, query_map,
+    split_csv,
+};
 
 /// 解析 Hysteria2 URL
 /// 格式: hy2://letmein@example.com:8443/?insecure=1&obfs=salamander&obfs-password=gawrgura&pinSHA256=deadbeef&sni=real.example.com&up=114&down=514&alpn=h3,h4#hy2test

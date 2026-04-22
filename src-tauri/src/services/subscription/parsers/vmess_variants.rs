@@ -21,16 +21,26 @@ pub fn try_parse_vmess_aead_url(raw: &str) -> Option<Vec<crate::models::NodeInfo
         let id = caps.get(3).map(|m| m.as_str()).unwrap_or("");
         let aid = caps.get(4).map(|m| m.as_str()).unwrap_or("0");
         let host = caps.get(5).map(|m| m.as_str()).unwrap_or("");
-        let port: u16 = caps.get(6).map(|m| m.as_str().parse().ok()).flatten().unwrap_or(443);
+        let port: u16 = caps
+            .get(6)
+            .map(|m| m.as_str().parse().ok())
+            .flatten()
+            .unwrap_or(443);
         let query_str = caps.get(7).map(|m| m.as_str()).unwrap_or("");
 
         let mut payload = ProxyPayload::new();
-        payload.insert("name".into(), JsonValue::String(format!("{}:{}", host, port)));
+        payload.insert(
+            "name".into(),
+            JsonValue::String(format!("{}:{}", host, port)),
+        );
         payload.insert("type".into(), JsonValue::String("vmess".to_string()));
         payload.insert("server".into(), JsonValue::String(host.to_string()));
         payload.insert("port".into(), JsonValue::from(port));
         payload.insert("uuid".into(), JsonValue::String(id.to_string()));
-        payload.insert("alterId".into(), JsonValue::from(aid.parse::<u16>().unwrap_or(0)));
+        payload.insert(
+            "alterId".into(),
+            JsonValue::from(aid.parse::<u16>().unwrap_or(0)),
+        );
         payload.insert("cipher".into(), JsonValue::String("auto".to_string()));
         payload.insert("udp".into(), JsonValue::Bool(true));
         payload.insert("network".into(), JsonValue::String(net.to_string()));
@@ -52,7 +62,13 @@ pub fn try_parse_vmess_aead_url(raw: &str) -> Option<Vec<crate::models::NodeInfo
         }
 
         let mut names = HashMap::new();
-        let node = super::super::build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-aead", &mut names, 1)?;
+        let node = super::super::build_node_from_payload(
+            &mut payload,
+            Some(raw.to_string()),
+            "vmess-aead",
+            &mut names,
+            1,
+        )?;
         return Some(vec![node]);
     }
 
@@ -105,12 +121,19 @@ pub fn try_parse_shadowrocket_vmess(raw: &str) -> Option<Vec<crate::models::Node
         .into_owned()
         .collect();
 
-    let remarks = query_map.get("remarks").cloned().unwrap_or_else(|| format!("{}:{}", server, port));
+    let remarks = query_map
+        .get("remarks")
+        .cloned()
+        .unwrap_or_else(|| format!("{}:{}", server, port));
     let obfs = query_map.get("obfs").cloned().unwrap_or_default();
     let obfs_param = query_map.get("obfsParam").cloned().unwrap_or_default();
     let path = query_map.get("path").cloned().unwrap_or_default();
     let network = query_map.get("network").cloned().unwrap_or_else(|| {
-        if obfs == "websocket" { "ws".to_string() } else { "tcp".to_string() }
+        if obfs == "websocket" {
+            "ws".to_string()
+        } else {
+            "tcp".to_string()
+        }
     });
     let tls = query_map.get("tls").map(|v| v == "1").unwrap_or(false);
 
@@ -141,7 +164,13 @@ pub fn try_parse_shadowrocket_vmess(raw: &str) -> Option<Vec<crate::models::Node
     }
 
     let mut names = HashMap::new();
-    let node = super::super::build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-shadowrocket", &mut names, 1)?;
+    let node = super::super::build_node_from_payload(
+        &mut payload,
+        Some(raw.to_string()),
+        "vmess-shadowrocket",
+        &mut names,
+        1,
+    )?;
     Some(vec![node])
 }
 
@@ -183,8 +212,14 @@ pub fn try_parse_kitsunebi_vmess(raw: &str) -> Option<Vec<crate::models::NodeInf
         .into_owned()
         .collect();
 
-    let remarks = query_map.get("remarks").cloned().unwrap_or_else(|| format!("{}:{}", server, port));
-    let network = query_map.get("network").cloned().unwrap_or("tcp".to_string());
+    let remarks = query_map
+        .get("remarks")
+        .cloned()
+        .unwrap_or_else(|| format!("{}:{}", server, port));
+    let network = query_map
+        .get("network")
+        .cloned()
+        .unwrap_or("tcp".to_string());
     let tls = query_map.get("tls").map(|v| v == "true").unwrap_or(false);
     let ws_host = query_map.get("ws.host").cloned().unwrap_or_default();
 
@@ -213,7 +248,13 @@ pub fn try_parse_kitsunebi_vmess(raw: &str) -> Option<Vec<crate::models::NodeInf
     }
 
     let mut names = HashMap::new();
-    let node = super::super::build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-kitsunebi", &mut names, 1)?;
+    let node = super::super::build_node_from_payload(
+        &mut payload,
+        Some(raw.to_string()),
+        "vmess-kitsunebi",
+        &mut names,
+        1,
+    )?;
     Some(vec![node])
 }
 
@@ -256,7 +297,10 @@ pub fn try_parse_quan_vmess(raw: &str) -> Option<Vec<crate::models::NodeInfo>> {
     let obfs = query_map.get("obfs").cloned().unwrap_or_default();
     let obfs_path = query_map.get("obfs-path").cloned().unwrap_or_default();
     let obfs_header = query_map.get("obfs-header").cloned().unwrap_or_default();
-    let tls = query_map.get("over-tls").map(|v| v == "true").unwrap_or(false);
+    let tls = query_map
+        .get("over-tls")
+        .map(|v| v == "true")
+        .unwrap_or(false);
 
     let mut network = "tcp".to_string();
     if obfs == "ws" {
@@ -297,6 +341,12 @@ pub fn try_parse_quan_vmess(raw: &str) -> Option<Vec<crate::models::NodeInfo>> {
     }
 
     let mut names = HashMap::new();
-    let node = super::super::build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-quan", &mut names, 1)?;
+    let node = super::super::build_node_from_payload(
+        &mut payload,
+        Some(raw.to_string()),
+        "vmess-quan",
+        &mut names,
+        1,
+    )?;
     Some(vec![node])
 }

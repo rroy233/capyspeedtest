@@ -6,7 +6,10 @@ use url::Url;
 use urlencoding::decode as url_decode;
 
 use super::super::types::ProxyPayload;
-use super::super::utils::{decode_base64_flexible, extract_userinfo_from_raw, parse_share_name, put_non_empty_string, query_map};
+use super::super::utils::{
+    decode_base64_flexible, extract_userinfo_from_raw, parse_share_name, put_non_empty_string,
+    query_map,
+};
 
 /// 解析 Shadowsocks URL
 /// 格式: ss://[base64(userinfo)]@server:port#name 或 ss://method:password@server:port#name
