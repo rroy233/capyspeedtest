@@ -2118,8 +2118,10 @@ fn cleanup_orphaned_impl(config_prefix: &str) -> Result<(), String> {
         use std::process::Command;
 
         // 使用 tasklist 获取所有 mihomo.exe 进程
-        let output = Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq mihomo.exe", "/FO", "CSV", "/NH"])
+        let mut cmd = Command::new("tasklist");
+        cmd.args(["/FI", "IMAGENAME eq mihomo.exe", "/FO", "CSV", "/NH"]);
+        apply_windows_spawn_flags(&mut cmd);
+        let output = cmd
             .output()
             .map_err(|e| format!("执行 tasklist 失败: {}", e))?;
 
@@ -2215,8 +2217,10 @@ fn get_process_commandline(pid: u32) -> Result<String, String> {
 fn kill_process_by_pid(pid: u32) -> Result<(), String> {
     use std::process::Command;
 
-    let output = Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/F"])
+    let mut cmd = Command::new("taskkill");
+    cmd.args(["/PID", &pid.to_string(), "/F"]);
+    apply_windows_spawn_flags(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("执行 taskkill 失败: {}", e))?;
 
