@@ -1,5 +1,9 @@
 //! 订阅解析模块：统一处理 YAML/URI/Base64 订阅并输出可直接用于测速的节点信息。
 
+pub mod parsers;
+pub mod types;
+pub mod utils;
+
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -13,14 +17,8 @@ use tracing::info;
 use url::Url;
 use urlencoding::decode as url_decode;
 
-/// 默认下载测速服务器（不经过代理，直连测速用）。
-const DEFAULT_TEST_FILE: &str = "http://speedtest.tele2.net/10MB.zip";
-/// 默认上传测速服务器。
-const DEFAULT_UPLOAD_TARGET: &str = "http://httpbin.org/post";
-/// 内部行格式前缀：用于把 YAML 节点重新编码成单行，兼容前端“按 raw 回填再解析”流程。
-const INTERNAL_PROXY_PREFIX: &str = "proxycfg://";
-
-type ProxyPayload = JsonMap<String, JsonValue>;
+// Re-export from submodules for backwards compatibility
+pub use types::{ProxyPayload, DEFAULT_TEST_FILE, DEFAULT_UPLOAD_TARGET, INTERNAL_PROXY_PREFIX};
 
 #[derive(Debug, Deserialize)]
 struct ProxySubscriptionYaml {
@@ -216,8 +214,27 @@ fn parse_subscription_line(
         }
         "anytls" => parse_anytls_line(raw).into_iter().collect::<Vec<_>>(),
         "mierus" => parse_mierus_line(raw),
+        "snell" => parse_snell_line(raw).into_iter().collect::<Vec<_>>(),
+        "ssd" => parse_ssd_line(raw),
+        "netch" => parse_netch_line(raw).into_iter().collect::<Vec<_>>(),
         _ => Vec::new(),
     };
+
+    // 尝试解析非 URL 标准格式
+    if payloads.is_empty() {
+        if let Some(nodes) = try_parse_vmess_aead_url(raw) {
+            return nodes;
+        }
+        if let Some(nodes) = try_parse_shadowrocket_vmess(raw) {
+            return nodes;
+        }
+        if let Some(nodes) = try_parse_kitsunebi_vmess(raw) {
+            return nodes;
+        }
+        if let Some(nodes) = try_parse_quan_vmess(raw) {
+            return nodes;
+        }
+    }
 
     let mut nodes = Vec::new();
     for (offset, mut payload) in payloads.into_iter().enumerate() {
@@ -851,6 +868,529 @@ fn parse_mierus_line(raw: &str) -> Vec<ProxyPayload> {
     result
 }
 
+// ============================================================================
+// 以下是新增的解析函数，参考 subconverter 实现
+// ============================================================================
+
+/// 解析 Snell 协议 URL
+/// 格式: snell://[version]:[password]@[server]:[port]
+/// 或: snell://[password]@[server]:[port] (默认 v2)
+fn parse_snell_line(raw: &str) -> Option<ProxyPayload> {
+    let url = Url::parse(raw).ok()?;
+    let query = query_map(&url);
+    let mut payload = ProxyPayload::new();
+    payload.insert(
+        "name".into(),
+        JsonValue::String(parse_share_name(
+            &url,
+            &format!("{}:{}", url.host_str()?, url.port().unwrap_or(443)),
+        )),
+    );
+    payload.insert("type".into(), JsonValue::String("snell".to_string()));
+    payload.insert(
+        "server".into(),
+        JsonValue::String(url.host_str()?.to_string()),
+    );
+    payload.insert("port".into(), JsonValue::from(url.port().unwrap_or(443)));
+
+    // Snell URL 格式: snell://[version]:[password]@[server]:[port]
+    // 版本号默认为 2
+    let userinfo = extract_userinfo_from_raw(raw)?;
+    let parts: Vec<&str> = userinfo.split(':').collect();
+    let mut version = 2u16;
+    let password;
+
+    if parts.len() >= 2 {
+        // 第一个部分可能是版本号
+        if let Ok(v) = parts[0].parse::<u16>() {
+            version = v;
+            password = parts[1..].join(":");
+        } else {
+            version = 2;
+            password = userinfo;
+        }
+    } else {
+        password = userinfo;
+    }
+
+    payload.insert("password".into(), JsonValue::String(password));
+    payload.insert("version".into(), JsonValue::from(version));
+
+    // obfs 参数
+    put_non_empty_string(&mut payload, "obfs", query.get("obfs"));
+    put_non_empty_string(&mut payload, "obfs-host", query.get("obfs-host"));
+
+    Some(payload)
+}
+
+/// 解析 SSD (Shadowsocks Android) 订阅格式
+/// 格式: ssd://[base64(JSON)]
+fn parse_ssd_line(raw: &str) -> Vec<ProxyPayload> {
+    let body = match raw.strip_prefix("ssd://") {
+        Some(b) => b,
+        None => return Vec::new(),
+    };
+    let decoded = match decode_base64_flexible(body) {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+    let decoded_text = match String::from_utf8(decoded) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+
+    let json: serde_json::Value = match serde_json::from_str(&decoded_text) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    if !json.get("servers").is_some() {
+        return Vec::new();
+    }
+
+    let airport = json.get("airport").and_then(|v| v.as_str()).unwrap_or("SSD");
+    let default_port = json.get("port").and_then(|v| v.as_u64()).unwrap_or(443) as u16;
+    let default_method = json.get("encryption").and_then(|v| v.as_str()).unwrap_or("");
+    let default_password = json.get("password").and_then(|v| v.as_str()).unwrap_or("");
+    let default_plugin = json.get("plugin").and_then(|v| v.as_str()).unwrap_or("");
+    let default_plugin_opts = json.get("plugin_options").and_then(|v| v.as_str()).unwrap_or("");
+
+    let servers = json.get("servers").and_then(|v| v.as_array());
+    let mut result = Vec::new();
+
+    if let Some(servers_arr) = servers {
+        for (i, server) in servers_arr.iter().enumerate() {
+            let mut payload = ProxyPayload::new();
+            let server_str = server.get("server").and_then(|v| v.as_str()).unwrap_or("");
+            let remarks = server.get("remarks").and_then(|v| v.as_str()).unwrap_or(server_str);
+            let port = server.get("port").and_then(|v| v.as_u64()).unwrap_or(default_port as u64) as u16;
+            let method = server.get("encryption").and_then(|v| v.as_str()).unwrap_or(default_method);
+            let password = server.get("password").and_then(|v| v.as_str()).unwrap_or(default_password);
+            let plugin = server.get("plugin").and_then(|v| v.as_str()).unwrap_or(default_plugin);
+            let plugin_opts = server.get("plugin_options").and_then(|v| v.as_str()).unwrap_or(default_plugin_opts);
+
+            payload.insert("name".into(), JsonValue::String(remarks.to_string()));
+            payload.insert("type".into(), JsonValue::String("ss".to_string()));
+            payload.insert("server".into(), JsonValue::String(server_str.to_string()));
+            payload.insert("port".into(), JsonValue::from(port));
+            payload.insert("cipher".into(), JsonValue::String(method.to_string()));
+            payload.insert("password".into(), JsonValue::String(password.to_string()));
+            payload.insert("udp".into(), JsonValue::Bool(true));
+
+            if !plugin.is_empty() {
+                payload.insert("plugin".into(), JsonValue::String(plugin.to_string()));
+                payload.insert("plugin-opts".into(), JsonValue::String(plugin_opts.to_string()));
+            }
+
+            result.push(payload);
+        }
+    }
+
+    result
+}
+
+/// 解析 Netch 格式
+/// 格式: Netch://[base64(JSON)]
+fn parse_netch_line(raw: &str) -> Vec<ProxyPayload> {
+    let body = match raw.strip_prefix("Netch://") {
+        Some(b) => b,
+        None => return Vec::new(),
+    };
+    let decoded = match decode_base64_flexible(body) {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+    let decoded_text = match String::from_utf8(decoded) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+
+    let json: serde_json::Value = match serde_json::from_str(&decoded_text) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    // Netch JSON 格式
+    let server_array = json.get("Server").and_then(|v| v.as_array());
+    let mut result = Vec::new();
+
+    if let Some(servers) = server_array {
+        for server_val in servers {
+            let mut payload = ProxyPayload::new();
+            let server = server_val.get("Hostname").and_then(|v| v.as_str()).unwrap_or("");
+            let remarks = server_val.get("Remark").and_then(|v| v.as_str()).unwrap_or(server);
+            let port = server_val.get("Port").and_then(|v| v.as_u64()).unwrap_or(443) as u16;
+            let protocol_type = server_val.get("Type").and_then(|v| v.as_str()).unwrap_or("");
+
+            payload.insert("name".into(), JsonValue::String(remarks.to_string()));
+            payload.insert("server".into(), JsonValue::String(server.to_string()));
+            payload.insert("port".into(), JsonValue::from(port));
+
+            match protocol_type {
+                "SS" => {
+                    payload.insert("type".into(), JsonValue::String("ss".to_string()));
+                    if let Some(method) = server_val.get("EncryptMethod").and_then(|v| v.as_str()) {
+                        payload.insert("cipher".into(), JsonValue::String(method.to_string()));
+                    }
+                    if let Some(password) = server_val.get("Password").and_then(|v| v.as_str()) {
+                        payload.insert("password".into(), JsonValue::String(password.to_string()));
+                    }
+                    payload.insert("udp".into(), JsonValue::Bool(true));
+                }
+                "SSR" => {
+                    payload.insert("type".into(), JsonValue::String("ssr".to_string()));
+                    if let Some(method) = server_val.get("EncryptMethod").and_then(|v| v.as_str()) {
+                        payload.insert("cipher".into(), JsonValue::String(method.to_string()));
+                    }
+                    if let Some(password) = server_val.get("Password").and_then(|v| v.as_str()) {
+                        payload.insert("password".into(), JsonValue::String(password.to_string()));
+                    }
+                    if let Some(protocol) = server_val.get("Protocol").and_then(|v| v.as_str()) {
+                        payload.insert("protocol".into(), JsonValue::String(protocol.to_string()));
+                    }
+                    if let Some(obfs) = server_val.get("OBFS").and_then(|v| v.as_str()) {
+                        payload.insert("obfs".into(), JsonValue::String(obfs.to_string()));
+                    }
+                    payload.insert("udp".into(), JsonValue::Bool(true));
+                }
+                "VMess" => {
+                    payload.insert("type".into(), JsonValue::String("vmess".to_string()));
+                    if let Some(id) = server_val.get("UserID").and_then(|v| v.as_str()) {
+                        payload.insert("uuid".into(), JsonValue::String(id.to_string()));
+                    }
+                    if let Some(aid) = server_val.get("AlterID").and_then(|v| v.as_u64()) {
+                        payload.insert("alterId".into(), JsonValue::from(aid as u16));
+                    }
+                    if let Some(method) = server_val.get("EncryptMethod").and_then(|v| v.as_str()) {
+                        payload.insert("cipher".into(), JsonValue::String(method.to_string()));
+                    } else {
+                        payload.insert("cipher".into(), JsonValue::String("auto".to_string()));
+                    }
+                    let transprot = server_val.get("TransferProtocol").and_then(|v| v.as_str()).unwrap_or("tcp");
+                    payload.insert("network".into(), JsonValue::String(transprot.to_string()));
+                    payload.insert("udp".into(), JsonValue::Bool(true));
+                }
+                "Socks5" => {
+                    payload.insert("type".into(), JsonValue::String("socks5".to_string()));
+                    if let Some(username) = server_val.get("Username").and_then(|v| v.as_str()) {
+                        payload.insert("username".into(), JsonValue::String(username.to_string()));
+                    }
+                    if let Some(password) = server_val.get("Password").and_then(|v| v.as_str()) {
+                        payload.insert("password".into(), JsonValue::String(password.to_string()));
+                    }
+                }
+                "Trojan" => {
+                    payload.insert("type".into(), JsonValue::String("trojan".to_string()));
+                    if let Some(password) = server_val.get("Password").and_then(|v| v.as_str()) {
+                        payload.insert("password".into(), JsonValue::String(password.to_string()));
+                    }
+                    payload.insert("udp".into(), JsonValue::Bool(true));
+                }
+                _ => continue,
+            }
+
+            result.push(payload);
+        }
+    }
+
+    result
+}
+
+/// 解析 VMess 标准 AEAD URL 格式
+/// 格式: vmess+tcp+tls:uuid-aaaa-bbbb-cccc-dddddddddddd-0@example.com:443?host=xxx
+/// 或: vmess+ws+tls:uuid-aid@host:port?path=xxx&host=xxx
+fn try_parse_vmess_aead_url(raw: &str) -> Option<Vec<NodeInfo>> {
+    let body = raw.strip_prefix("vmess://")?;
+    // 标准 AEAD 格式: vmess+tcp+tls:uuid-aid@host:port?...
+    let re = Regex::new(r"^(vmess(?:\+([a-z]+))?(?:\+([a-z]+))?:([\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})-(\d+)@(.+):(\d+)(?:\/?\?(.*))?$").ok()?;
+
+    if let Some(caps) = re.captures(body) {
+        let net = caps.get(1).map(|m| m.as_str()).unwrap_or("tcp");
+        let tls = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let id = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+        let aid = caps.get(4).map(|m| m.as_str()).unwrap_or("0");
+        let host = caps.get(5).map(|m| m.as_str()).unwrap_or("");
+        let port: u16 = caps.get(6).map(|m| m.as_str().parse().ok()).flatten().unwrap_or(443);
+        let query_str = caps.get(7).map(|m| m.as_str()).unwrap_or("");
+
+        let mut payload = ProxyPayload::new();
+        payload.insert("name".into(), JsonValue::String(format!("{}:{}", host, port)));
+        payload.insert("type".into(), JsonValue::String("vmess".to_string()));
+        payload.insert("server".into(), JsonValue::String(host.to_string()));
+        payload.insert("port".into(), JsonValue::from(port));
+        payload.insert("uuid".into(), JsonValue::String(id.to_string()));
+        payload.insert("alterId".into(), JsonValue::from(aid.parse::<u16>().unwrap_or(0)));
+        payload.insert("cipher".into(), JsonValue::String("auto".to_string()));
+        payload.insert("udp".into(), JsonValue::Bool(true));
+        payload.insert("network".into(), JsonValue::String(net.to_string()));
+
+        if !tls.is_empty() && tls != "none" {
+            payload.insert("tls".into(), JsonValue::Bool(true));
+        }
+
+        // 解析查询参数
+        let query_map: HashMap<String, String> = url::form_urlencoded::parse(query_str.as_bytes())
+            .into_owned()
+            .collect();
+
+        if let Some(host_val) = query_map.get("host") {
+            payload.insert("servername".into(), JsonValue::String(host_val.clone()));
+        }
+        if let Some(path_val) = query_map.get("path") {
+            payload.insert("path".into(), JsonValue::String(path_val.clone()));
+        }
+
+        let mut names = HashMap::new();
+        let node = build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-aead", &mut names, 1)?;
+        return Some(vec![node]);
+    }
+
+    None
+}
+
+/// 解析 Shadowrocket 风格 VMess URL
+/// 格式: vmess://[base64(cipher:uuid@server:port)]?remarks=xxx&obfs=websocket&obfsParam=xxx&path=xxx&tls=1
+fn try_parse_shadowrocket_vmess(raw: &str) -> Option<Vec<NodeInfo>> {
+    let body = raw.strip_prefix("vmess://")?;
+    if !body.contains("?remarks=") {
+        return None;
+    }
+
+    // Shadowrocket 格式用 ? 分隔，前面是 base64 编码的 userinfo
+    let parts: Vec<&str> = body.splitn(2, '?').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let userinfo_b64 = parts[0];
+    let query_str = parts[1];
+
+    let decoded = decode_base64_flexible(userinfo_b64)?;
+    let userinfo = String::from_utf8(decoded).ok()?;
+
+    // userinfo 格式: cipher:uuid@server:port
+    let user_parts: Vec<&str> = userinfo.splitn(2, ':').collect();
+    if user_parts.len() < 2 {
+        return None;
+    }
+    let cipher = user_parts[0];
+    let rest = user_parts[1];
+
+    let rest_parts: Vec<&str> = rest.rsplitn(2, '@').collect();
+    if rest_parts.len() < 2 {
+        return None;
+    }
+    let server_port = rest_parts[0];
+    let uuid = rest_parts[1];
+
+    let sp: Vec<&str> = server_port.rsplitn(2, ':').collect();
+    if sp.len() < 2 {
+        return None;
+    }
+    let server = sp[1];
+    let port: u16 = sp[0].parse().ok().unwrap_or(443);
+
+    let query_map: HashMap<String, String> = url::form_urlencoded::parse(query_str.as_bytes())
+        .into_owned()
+        .collect();
+
+    let remarks = query_map.get("remarks").cloned().unwrap_or_else(|| format!("{}:{}", server, port));
+    let obfs = query_map.get("obfs").cloned().unwrap_or_default();
+    let obfs_param = query_map.get("obfsParam").cloned().unwrap_or_default();
+    let path = query_map.get("path").cloned().unwrap_or_default();
+    let network = query_map.get("network").cloned().unwrap_or_else(|| {
+        if obfs == "websocket" { "ws".to_string() } else { "tcp".to_string() }
+    });
+    let tls = query_map.get("tls").map(|v| v == "1").unwrap_or(false);
+
+    let mut payload = ProxyPayload::new();
+    payload.insert("name".into(), JsonValue::String(remarks));
+    payload.insert("type".into(), JsonValue::String("vmess".to_string()));
+    payload.insert("server".into(), JsonValue::String(server.to_string()));
+    payload.insert("port".into(), JsonValue::from(port));
+    payload.insert("uuid".into(), JsonValue::String(uuid.to_string()));
+    payload.insert("alterId".into(), JsonValue::from(0));
+    payload.insert("cipher".into(), JsonValue::String(cipher.to_string()));
+    payload.insert("udp".into(), JsonValue::Bool(true));
+    payload.insert("network".into(), JsonValue::String(network.clone()));
+
+    if tls {
+        payload.insert("tls".into(), JsonValue::Bool(true));
+    }
+
+    if network == "ws" && !path.is_empty() {
+        let mut ws_opts = serde_json::Map::new();
+        ws_opts.insert("path".to_string(), JsonValue::String(path.clone()));
+        if !obfs_param.is_empty() {
+            let mut headers = serde_json::Map::new();
+            headers.insert("Host".to_string(), JsonValue::String(obfs_param));
+            ws_opts.insert("headers".to_string(), JsonValue::Object(headers));
+        }
+        payload.insert("ws-opts".into(), JsonValue::Object(ws_opts));
+    }
+
+    let mut names = HashMap::new();
+    let node = build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-shadowrocket", &mut names, 1)?;
+    Some(vec![node])
+}
+
+/// 解析 Kitsunebi 风格 VMess URL
+/// 格式: vmess1://[base64(userinfo)]?network=ws&tls=true&ws.host=xxx
+fn try_parse_kitsunebi_vmess(raw: &str) -> Option<Vec<NodeInfo>> {
+    let body = raw.strip_prefix("vmess1://")?;
+    if !body.contains("?network=") && !body.contains("?tls=") {
+        return None;
+    }
+
+    // 分离 userinfo 和 query
+    let parts: Vec<&str> = body.splitn(2, '?').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let userinfo_b64 = parts[0];
+    let query_str = parts[1];
+
+    let decoded = decode_base64_flexible(userinfo_b64)?;
+    let userinfo = String::from_utf8(decoded).ok()?;
+
+    // userinfo 格式: uuid@server:port 或 server:port
+    let (uuid, server, port) = if userinfo.contains('@') {
+        let at_pos = userinfo.find('@').unwrap();
+        let uuid = &userinfo[..at_pos];
+        let rest = &userinfo[at_pos + 1..];
+        let sp: Vec<&str> = rest.rsplitn(2, ':').collect();
+        if sp.len() < 2 {
+            return None;
+        }
+        (uuid.to_string(), sp[1], sp[0].parse().unwrap_or(443))
+    } else {
+        return None;
+    };
+
+    let query_map: HashMap<String, String> = url::form_urlencoded::parse(query_str.as_bytes())
+        .into_owned()
+        .collect();
+
+    let remarks = query_map.get("remarks").cloned().unwrap_or_else(|| format!("{}:{}", server, port));
+    let network = query_map.get("network").cloned().unwrap_or("tcp".to_string());
+    let tls = query_map.get("tls").map(|v| v == "true").unwrap_or(false);
+    let ws_host = query_map.get("ws.host").cloned().unwrap_or_default();
+
+    let mut payload = ProxyPayload::new();
+    payload.insert("name".into(), JsonValue::String(remarks));
+    payload.insert("type".into(), JsonValue::String("vmess".to_string()));
+    payload.insert("server".into(), JsonValue::String(server.to_string()));
+    payload.insert("port".into(), JsonValue::from(port));
+    payload.insert("uuid".into(), JsonValue::String(uuid));
+    payload.insert("alterId".into(), JsonValue::from(0));
+    payload.insert("cipher".into(), JsonValue::String("auto".to_string()));
+    payload.insert("udp".into(), JsonValue::Bool(true));
+    payload.insert("network".into(), JsonValue::String(network.clone()));
+
+    if tls {
+        payload.insert("tls".into(), JsonValue::Bool(true));
+    }
+
+    if network == "ws" && !ws_host.is_empty() {
+        let mut ws_opts = serde_json::Map::new();
+        ws_opts.insert("path".to_string(), JsonValue::String("/".to_string()));
+        let mut headers = serde_json::Map::new();
+        headers.insert("Host".to_string(), JsonValue::String(ws_host));
+        ws_opts.insert("headers".to_string(), JsonValue::Object(headers));
+        payload.insert("ws-opts".into(), JsonValue::Object(ws_opts));
+    }
+
+    let mut names = HashMap::new();
+    let node = build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-kitsunebi", &mut names, 1)?;
+    Some(vec![node])
+}
+
+/// 解析 Quan 风格 VMess 配置
+/// 格式: vmess=xxx=vmess,[server],[port],[cipher],[uuid] group=xxx obfs-path=xxx obfs-header=...
+fn try_parse_quan_vmess(raw: &str) -> Option<Vec<NodeInfo>> {
+    if !raw.contains("vmess=") || !raw.contains("=vmess,") {
+        return None;
+    }
+
+    let trimmed = raw.trim();
+    let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let config_part = parts[1];
+    let config_segments: Vec<&str> = config_part.splitn(6, ',').collect();
+    if config_segments.len() < 5 {
+        return None;
+    }
+
+    let remarks = parts[0].trim();
+    let server = config_segments[0].trim();
+    let port: u16 = config_segments[1].trim().parse().ok().unwrap_or(443);
+    let cipher = config_segments[2].trim();
+    let uuid = config_segments[3].trim().trim_matches('"');
+
+    // 解析额外参数
+    let extra_str = if config_segments.len() > 5 {
+        config_segments[5]
+    } else {
+        ""
+    };
+
+    let query_map: HashMap<String, String> = url::form_urlencoded::parse(extra_str.as_bytes())
+        .into_owned()
+        .collect();
+
+    let obfs = query_map.get("obfs").cloned().unwrap_or_default();
+    let obfs_path = query_map.get("obfs-path").cloned().unwrap_or_default();
+    let obfs_header = query_map.get("obfs-header").cloned().unwrap_or_default();
+    let group = query_map.get("group").cloned().unwrap_or_default();
+    let tls = query_map.get("over-tls").map(|v| v == "true").unwrap_or(false);
+
+    let mut network = "tcp".to_string();
+    if obfs == "ws" {
+        network = "ws".to_string();
+    }
+
+    let mut payload = ProxyPayload::new();
+    payload.insert("name".into(), JsonValue::String(remarks.to_string()));
+    payload.insert("type".into(), JsonValue::String("vmess".to_string()));
+    payload.insert("server".into(), JsonValue::String(server.to_string()));
+    payload.insert("port".into(), JsonValue::from(port));
+    payload.insert("uuid".into(), JsonValue::String(uuid.to_string()));
+    payload.insert("alterId".into(), JsonValue::from(0));
+    payload.insert("cipher".into(), JsonValue::String(cipher.to_string()));
+    payload.insert("udp".into(), JsonValue::Bool(true));
+    payload.insert("network".into(), JsonValue::String(network.clone()));
+
+    if tls {
+        payload.insert("tls".into(), JsonValue::Bool(true));
+    }
+
+    if network == "ws" && !obfs_path.is_empty() {
+        let mut ws_opts = serde_json::Map::new();
+        ws_opts.insert("path".to_string(), JsonValue::String(obfs_path));
+        if !obfs_header.is_empty() {
+            let mut headers = serde_json::Map::new();
+            // 解析 obfs-header 格式: "Host: xxx\r\n"
+            for line in obfs_header.lines() {
+                if line.to_lowercase().starts_with("host:") {
+                    let host_val = line.trim_start_matches("Host:").trim();
+                    headers.insert("Host".to_string(), JsonValue::String(host_val.to_string()));
+                    break;
+                }
+            }
+            ws_opts.insert("headers".to_string(), JsonValue::Object(headers));
+        }
+        payload.insert("ws-opts".into(), JsonValue::Object(ws_opts));
+    }
+
+    let mut names = HashMap::new();
+    let node = build_node_from_payload(&mut payload, Some(raw.to_string()), "vmess-quan", &mut names, 1)?;
+    Some(vec![node])
+}
+
 fn handle_v_share_link(url: &Url, scheme: &str) -> Option<ProxyPayload> {
     let query = query_map(url);
     let mut payload = ProxyPayload::new();
@@ -1214,13 +1754,19 @@ fn payload_to_connect_info(protocol: &str, payload: &ProxyPayload) -> Option<Nod
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string);
         }
-        "hysteria" | "hysteria2" | "tuic" | "socks5" | "http" | "anytls" | "mieru" => {
+        "hysteria" | "hysteria2" | "tuic" | "socks5" | "http" | "anytls" | "mieru" | "snell" => {
             username = payload
                 .get("username")
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string);
             password = payload
                 .get("password")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+        }
+        "wireguard" => {
+            password = payload
+                .get("private-key")
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string);
         }
