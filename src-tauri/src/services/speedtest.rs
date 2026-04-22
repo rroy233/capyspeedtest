@@ -1201,7 +1201,6 @@ async fn do_download_test(
                 let test_host = test_host.clone();
                 let path = path.clone();
                 let parsed = parsed.clone();
-                let dynamic_nocache = dynamic_nocache;
                 let proxy_url = socks_proxy.map(String::from);
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(timeout_duration, async move {
@@ -1300,7 +1299,6 @@ async fn do_download_test(
                 let client = client.clone();
                 let request_url = normalized_url.clone();
                 let parsed = parsed.clone();
-                let dynamic_nocache = dynamic_nocache;
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(timeout_duration, async move {
                         while let Ok(response) = client

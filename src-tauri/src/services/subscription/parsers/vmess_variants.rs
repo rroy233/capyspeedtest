@@ -13,7 +13,10 @@ use super::super::utils::decode_base64_flexible;
 pub fn try_parse_vmess_aead_url(raw: &str) -> Option<Vec<crate::models::NodeInfo>> {
     let body = raw.strip_prefix("vmess://")?;
     // 标准 AEAD 格式: vmess+tcp+tls:uuid-aid@host:port?...
-    let re = Regex::new(r"^(vmess(?:\+([a-z]+))?(?:\+([a-z]+))?:([\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})-(\d+)@(.+):(\d+)(?:\/?\?(.*))?$").ok()?;
+    let re = Regex::new(
+        r#"^vmess(?:\+([a-z]+))?(?:\+([a-z]+))?:([\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})-(\d+)@(.+):(\d+)(?:/?\?(.*))?$"#,
+    )
+    .ok()?;
 
     if let Some(caps) = re.captures(body) {
         let net = caps.get(1).map(|m| m.as_str()).unwrap_or("tcp");
@@ -23,8 +26,7 @@ pub fn try_parse_vmess_aead_url(raw: &str) -> Option<Vec<crate::models::NodeInfo
         let host = caps.get(5).map(|m| m.as_str()).unwrap_or("");
         let port: u16 = caps
             .get(6)
-            .map(|m| m.as_str().parse().ok())
-            .flatten()
+            .and_then(|m| m.as_str().parse().ok())
             .unwrap_or(443);
         let query_str = caps.get(7).map(|m| m.as_str()).unwrap_or("");
 
